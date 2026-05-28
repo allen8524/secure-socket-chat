@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from nacl.encoding import Base64Encoder
@@ -62,7 +62,7 @@ def build_inner_payload(sender: str, recipient: str, text: str) -> dict[str, Any
         "from": sender,
         "to": recipient,
         "text": text,
-        "created_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     }
 
 
