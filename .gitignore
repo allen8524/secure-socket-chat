@@ -9,6 +9,9 @@ received_images/
 received_files/
 *.log
 *.tmp
+.secure_socket_chat/
+*.key
+server_private.key
 .idea/
 .vscode/
 dist/

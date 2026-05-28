@@ -7,13 +7,24 @@ import socket
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 
+from nacl.encoding import Base64Encoder
+from nacl.public import PrivateKey
+
 from secure_chat.config import DEFAULT_HOST, DEFAULT_PORT, SOCKET_TIMEOUT_SECONDS
-from secure_chat.crypto_channel import PacketSequenceError, ReplayAttackError, SecureChannel, create_server_channel
+from secure_chat.crypto_channel import (
+    PacketSequenceError,
+    ReplayAttackError,
+    SecureChannel,
+    create_server_channel,
+)
 from secure_chat.e2e import E2E_ALGORITHM, E2E_VERSION, ciphertext_preview
 from secure_chat.file_transfer import file_extension, guess_mime_type
 from secure_chat.protocol import ProtocolError
+from secure_chat.security import public_key_fingerprint
+from secure_chat.server_key_store import load_or_create_server_private_key
 from secure_chat.utils import safe_filename
 
 logger = logging.getLogger(__name__)
@@ -28,9 +39,16 @@ class ClientE2EMetadata:
 class ChatServer:
     """Multi-client encrypted chat server."""
 
-    def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
+    def __init__(
+        self,
+        host: str = DEFAULT_HOST,
+        port: int = DEFAULT_PORT,
+        server_key_file: str | Path | None = None,
+    ) -> None:
         self.host = host
         self.port = port
+        self.server_key_file = Path(server_key_file) if server_key_file is not None else None
+        self._server_private_key: PrivateKey | None = None
         self._clients: dict[str, SecureChannel] = {}
         self._client_e2e_keys: dict[str, ClientE2EMetadata] = {}
         self._clients_lock = threading.Lock()
@@ -45,6 +63,7 @@ class ChatServer:
         self._running = threading.Event()
 
     def start(self) -> None:
+        self._prepare_server_private_key()
         self._running.set()
         self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -90,6 +109,20 @@ class ChatServer:
             self._server_sock = None
 
         logger.info("chat server stopped")
+
+    def _prepare_server_private_key(self) -> None:
+        if self.server_key_file is None:
+            self._server_private_key = None
+            logger.info("server key persistence disabled; using ephemeral per-connection server keys")
+            return
+
+        self._server_private_key = load_or_create_server_private_key(self.server_key_file)
+        server_public_key = self._server_private_key.public_key.encode(encoder=Base64Encoder).decode("utf-8")
+        logger.info(
+            "server key persistence enabled: key_file=%s fingerprint=%s",
+            self.server_key_file,
+            public_key_fingerprint(server_public_key),
+        )
 
     def _get_clients_snapshot(self) -> dict[str, SecureChannel]:
         with self._clients_lock:
@@ -179,7 +212,7 @@ class ChatServer:
         logger.info("connection requested from %s", addr)
 
         try:
-            channel = create_server_channel(client_sock)
+            channel = create_server_channel(client_sock, server_private_key=self._server_private_key)
 
             header, payload = channel.recv()
             if header is None or header.get("type") != "join":

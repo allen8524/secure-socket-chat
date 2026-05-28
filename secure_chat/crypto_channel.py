@@ -263,10 +263,11 @@ def create_client_channel(
 def create_server_channel(
     client_sock: socket.socket,
     inspection_callback: Callable[[PacketInspectionEvent], None] | None = None,
+    server_private_key: PrivateKey | None = None,
 ) -> SecureChannel:
     """Create a SecureChannel from the server side."""
-    server_private_key = PrivateKey.generate()
-    server_public_key = server_private_key.public_key.encode(encoder=Base64Encoder).decode("utf-8")
+    active_server_private_key = server_private_key or PrivateKey.generate()
+    server_public_key = active_server_private_key.public_key.encode(encoder=Base64Encoder).decode("utf-8")
 
     raw_send_packet(client_sock, {"type": "server_public_key", "public_key": server_public_key})
 
@@ -291,4 +292,4 @@ def create_server_channel(
     )
 
     logger.info("key exchange complete: server private key + client public key / session=%s", metadata.session_id)
-    return SecureChannel(client_sock, Box(server_private_key, client_public_key), "client", metadata, inspection_callback)
+    return SecureChannel(client_sock, Box(active_server_private_key, client_public_key), "client", metadata, inspection_callback)
