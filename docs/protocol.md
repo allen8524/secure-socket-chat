@@ -52,6 +52,24 @@ logical packet = header length + JSON header + payload
 }
 ```
 
+## Packet Inspector
+
+GUI 클라이언트의 Packet Inspector는 시연용 관찰 기능입니다. 암호화 전 logical packet과 암호화 후 transport packet의 차이를 이해할 수 있도록 최근 패킷의 요약만 표시합니다.
+
+| 표시 항목 | 의미 |
+|---|---|
+| direction | `OUTBOUND` 또는 `INBOUND` 방향 |
+| logical packet type | 복호화된 논리 패킷의 `type` 값 |
+| logical header summary | 메시지 전문 대신 type, 대상, 파일명, 짧은 text preview 등 안전한 요약 |
+| payload size | logical packet의 payload byte 크기 |
+| encrypted packet size | PyNaCl Box로 암호화된 transport payload byte 크기 |
+| ciphertext preview | base64로 인코딩한 암호문의 앞부분 일부 |
+| integrity hash | 이미지 header에 SHA-256 값이 포함되었는지 여부 |
+| decrypt | 수신 패킷 복호화 성공 여부 |
+| last error | 복호화 또는 패킷 처리 중 마지막 오류 요약 |
+
+Packet Inspector는 암호화 키, 개인키, 전체 메시지 본문, 전체 이미지 binary, 전체 암호문을 표시하지 않습니다. 운영 환경에서는 이런 상세 preview도 더 제한하거나 비활성화하는 것이 안전합니다.
+
 ## Packet types
 
 | type | 방향 | 설명 |

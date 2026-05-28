@@ -12,6 +12,7 @@ from typing import Any
 
 from secure_chat.config import DEFAULT_HOST, DEFAULT_PORT, MAX_PAYLOAD_SIZE
 from secure_chat.crypto_channel import SecureChannel, create_client_channel
+from secure_chat.packet_inspector import PacketInspectionEvent
 from secure_chat.security import ChannelMetadata, sha256_hex
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ class ChatClient:
         self.port = port
         self.username = username.strip()
         self.inbox: queue.Queue[tuple[dict[str, Any], bytes]] = queue.Queue()
+        self.packet_events: queue.Queue[PacketInspectionEvent] = queue.Queue()
         self._sock: socket.socket | None = None
         self._channel: SecureChannel | None = None
         self._running = threading.Event()
@@ -83,7 +85,7 @@ class ChatClient:
         self._sent_packet_count = 0
         self._received_packet_count = 0
         self._last_received_message_type = "-"
-        self._channel = create_client_channel(self._sock)
+        self._channel = create_client_channel(self._sock, inspection_callback=self.packet_events.put)
         self.connected_at = datetime.now()
         self._send({"type": "join", "username": self.username})
 

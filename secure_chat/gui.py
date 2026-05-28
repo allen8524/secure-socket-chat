@@ -12,6 +12,7 @@ from typing import Any
 
 from secure_chat.client import ChatClient
 from secure_chat.config import DEFAULT_RECEIVE_DIR
+from secure_chat.packet_inspector import PacketInspectionEvent, format_packet_inspection_event
 from secure_chat.security import sha256_hex
 from secure_chat.utils import save_received_file
 
@@ -89,13 +90,14 @@ class ChatApp:
         self.client: ChatClient | None = None
         self.online_users: list[str] = []
         self.transcript_lines: list[str] = []
+        self.packet_inspection_events: list[PacketInspectionEvent] = []
         self.last_image_integrity_result = "N/A"
         self.security_dashboard_state = SecurityDashboardState()
 
         self.win = tk.Tk()
         self.win.title("SecureSocketChat")
-        self.win.geometry("860x600")
-        self.win.minsize(780, 520)
+        self.win.geometry("1120x760")
+        self.win.minsize(980, 680)
 
         self.security_vars: dict[str, tk.StringVar] = {}
         self.status_text = tk.StringVar(value="Ready")
@@ -127,7 +129,7 @@ class ChatApp:
         user_label.pack(anchor="w")
 
         self.user_list = tk.Listbox(left_frame, width=31, height=9, exportselection=False)
-        self.user_list.pack(fill=tk.Y, expand=True)
+        self.user_list.pack(fill=tk.X)
         self.user_list.insert(tk.END, "전체")
         self.user_list.selection_set(0)
 
@@ -180,11 +182,27 @@ class ChatApp:
         right_frame = tk.Frame(main_frame)
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        self.chat_text = tk.Text(right_frame, height=20, state=tk.DISABLED, wrap=tk.WORD)
-        chat_scroll = tk.Scrollbar(right_frame, command=self.chat_text.yview)
+        chat_frame = tk.Frame(right_frame)
+        chat_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.chat_text = tk.Text(chat_frame, height=17, state=tk.DISABLED, wrap=tk.WORD)
+        chat_scroll = tk.Scrollbar(chat_frame, command=self.chat_text.yview)
         self.chat_text.config(yscrollcommand=chat_scroll.set)
         chat_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.chat_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        inspector_frame = tk.LabelFrame(right_frame, text="Packet Inspector", padx=8, pady=8)
+        inspector_frame.pack(fill=tk.X, pady=(10, 0))
+
+        self.packet_inspector_text = tk.Text(
+            inspector_frame,
+            height=10,
+            state=tk.DISABLED,
+            wrap=tk.WORD,
+            font=("Consolas", 9),
+        )
+        self.packet_inspector_text.pack(fill=tk.X)
+        self._refresh_packet_inspector()
 
         bottom_frame = tk.Frame(self.win, padx=10, pady=10)
         bottom_frame.pack(fill=tk.X)
@@ -282,6 +300,7 @@ class ChatApp:
             elif msg_type == "stats":
                 self._handle_stats(header)
 
+        self._drain_packet_inspection_events()
         self._refresh_security_panel()
         self.win.after(100, self._process_messages)
 
@@ -337,6 +356,7 @@ class ChatApp:
                     self._add_chat_line("[사용법] /w 사용자명 메시지")
                     return
                 self.client.send_whisper(parts[1].strip(), parts[2].strip())
+                self._drain_packet_inspection_events()
                 self._refresh_security_panel()
                 return
 
@@ -345,8 +365,10 @@ class ChatApp:
                 self.client.send_whisper(target, text)
             else:
                 self.client.send_chat(text)
+            self._drain_packet_inspection_events()
             self._refresh_security_panel()
         except OSError:
+            self._drain_packet_inspection_events()
             self._add_chat_line("[오류] 메시지 전송 실패")
             self._refresh_security_panel()
 
@@ -389,12 +411,46 @@ class ChatApp:
             digest = self.client.send_image(target, file_path)
             self._add_chat_line(f"[전송] 이미지 전송 요청: {Path(file_path).name} -> {target}")
             self._add_chat_line(f"        SHA-256: {digest[:16]}")
+            self._drain_packet_inspection_events()
             self._refresh_security_panel()
         except ValueError as exc:
             messagebox.showerror("전송 실패", str(exc))
         except OSError:
+            self._drain_packet_inspection_events()
             self._add_chat_line("[오류] 이미지 전송 실패")
             self._refresh_security_panel()
+
+    def _drain_packet_inspection_events(self) -> None:
+        if self.client is None:
+            self._refresh_packet_inspector()
+            return
+
+        changed = False
+        while True:
+            try:
+                event = self.client.packet_events.get_nowait()
+            except queue.Empty:
+                break
+            self.packet_inspection_events.append(event)
+            self.packet_inspection_events = self.packet_inspection_events[-5:]
+            changed = True
+
+        if changed:
+            self._refresh_packet_inspector()
+
+    def _refresh_packet_inspector(self) -> None:
+        if not hasattr(self, "packet_inspector_text"):
+            return
+
+        if self.packet_inspection_events:
+            content = "\n\n".join(format_packet_inspection_event(event) for event in self.packet_inspection_events)
+        else:
+            content = "No packet captured yet."
+
+        self.packet_inspector_text.config(state=tk.NORMAL)
+        self.packet_inspector_text.delete("1.0", tk.END)
+        self.packet_inspector_text.insert(tk.END, content)
+        self.packet_inspector_text.config(state=tk.DISABLED)
 
     def _refresh_security_panel(self) -> None:
         state = build_security_dashboard_state(self.client, self.last_image_integrity_result)
@@ -430,8 +486,10 @@ class ChatApp:
             return
         try:
             self.client.request_stats()
+            self._drain_packet_inspection_events()
             self._refresh_security_panel()
         except OSError:
+            self._drain_packet_inspection_events()
             self._add_chat_line("[오류] 서버 통계 요청 실패")
             self._refresh_security_panel()
 

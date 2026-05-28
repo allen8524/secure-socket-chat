@@ -23,6 +23,7 @@ SecureSocketChat은 단순 채팅 예제를 넘어, 네트워크 패킷 framing,
 | 채팅 기능 | 전체 채팅, 1:1 귓속말, `/w` 명령어 기반 귓속말 |
 | 이미지 전송 | 이미지 파일 전송 및 SHA-256 이미지 무결성 검증 |
 | 보안 정보 | GUI Security Dashboard에서 보안 세션 정보와 송수신 패킷 상태 표시 |
+| 패킷 관찰 | Packet Inspector에서 암호화 전 논리 패킷과 암호화 후 전송 패킷의 요약 비교 |
 | 서버 운영 정보 | 서버 uptime, 접속자 수, 메시지/이미지 전송 통계 조회 |
 | GUI | Tkinter 기반 데스크톱 GUI 클라이언트와 접속자 목록 실시간 동기화 |
 | 방어 로직 | payload 크기 제한, header 크기 제한, 수신 파일명 정규화 |
@@ -207,6 +208,8 @@ Python socket 기반 채팅 프로그램에 공개키 교환 방식을 적용해
 ## 시연 포인트
 
 - GUI 좌측 Security Dashboard에서 연결/암호화 상태, session id, client/server fingerprint, 송수신 패킷 수 확인
+- GUI Packet Inspector에서 암호화 전 logical packet과 암호화 후 transport packet 차이 확인
+- Packet Inspector는 메시지 전문, 이미지 binary, 전체 암호문을 표시하지 않고 제한된 preview만 표시
 - `/security` 명령어로 현재 암호화 세션 정보 출력
 - `/stats` 명령어로 서버 uptime, 접속자 수, 메시지/이미지 전송량 조회
 - 이미지 전송 시 SHA-256 해시를 header에 포함하고 수신 측에서 payload 무결성 확인
