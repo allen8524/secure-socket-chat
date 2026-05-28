@@ -6,15 +6,23 @@ import logging
 import socket
 import threading
 import time
+from dataclasses import dataclass
 from typing import Iterable
 
 from secure_chat.config import DEFAULT_HOST, DEFAULT_PORT, SOCKET_TIMEOUT_SECONDS
 from secure_chat.crypto_channel import PacketSequenceError, ReplayAttackError, SecureChannel, create_server_channel
+from secure_chat.e2e import E2E_ALGORITHM, E2E_VERSION, ciphertext_preview
 from secure_chat.file_transfer import file_extension, guess_mime_type
 from secure_chat.protocol import ProtocolError
 from secure_chat.utils import safe_filename
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ClientE2EMetadata:
+    public_key: str
+    fingerprint: str
 
 
 class ChatServer:
@@ -24,6 +32,7 @@ class ChatServer:
         self.host = host
         self.port = port
         self._clients: dict[str, SecureChannel] = {}
+        self._client_e2e_keys: dict[str, ClientE2EMetadata] = {}
         self._clients_lock = threading.Lock()
         self._started_at = time.time()
         self._total_messages = 0
@@ -114,9 +123,16 @@ class ChatServer:
     def _broadcast_user_list(self) -> None:
         with self._clients_lock:
             usernames = sorted(self._clients.keys())
-        self._broadcast({"type": "users", "users": usernames})
+            e2e_keys = {
+                username: {
+                    "public_key": metadata.public_key,
+                    "fingerprint": metadata.fingerprint,
+                }
+                for username, metadata in self._client_e2e_keys.items()
+            }
+        self._broadcast({"type": "users", "users": usernames, "e2e_keys": e2e_keys})
 
-    def _add_user(self, username: str, channel: SecureChannel) -> bool:
+    def _add_user(self, username: str, channel: SecureChannel, header: dict) -> bool:
         normalized_username = username.strip()
 
         if not normalized_username:
@@ -128,6 +144,13 @@ class ChatServer:
                 channel.send({"type": "error", "text": "이미 사용 중인 이름입니다."})
                 return False
             self._clients[normalized_username] = channel
+            e2e_public_key = str(header.get("e2e_public_key", "")).strip()
+            e2e_fingerprint = str(header.get("e2e_fingerprint", "")).strip()
+            if e2e_public_key and e2e_fingerprint:
+                self._client_e2e_keys[normalized_username] = ClientE2EMetadata(
+                    public_key=e2e_public_key,
+                    fingerprint=e2e_fingerprint,
+                )
 
         channel.send({"type": "system", "text": f"{normalized_username}님 접속 완료"})
         self._broadcast({"type": "system", "text": f"{normalized_username}님이 입장했습니다."})
@@ -140,6 +163,7 @@ class ChatServer:
 
         with self._clients_lock:
             removed_channel = self._clients.pop(username, None)
+            self._client_e2e_keys.pop(username, None)
 
         if removed_channel is None:
             return
@@ -163,7 +187,7 @@ class ChatServer:
                 return
 
             username = str(header.get("username", "")).strip()
-            if not self._add_user(username, channel):
+            if not self._add_user(username, channel, header):
                 return
 
             while self._running.is_set():
@@ -179,6 +203,8 @@ class ChatServer:
                     self._handle_chat(username, header)
                 elif msg_type == "whisper":
                     self._handle_whisper(username, header)
+                elif msg_type == "e2e_whisper":
+                    self._handle_e2e_whisper(username, header)
                 elif msg_type == "image":
                     self._handle_image(username, header, payload)
                 elif msg_type == "file":
@@ -250,6 +276,50 @@ class ChatServer:
         if target != username:
             self._send_to(username, packet)
         logger.info("whisper: %s -> %s", username, target)
+
+    def _handle_e2e_whisper(self, username: str, header: dict) -> None:
+        target = str(header.get("to", "")).strip()
+        ciphertext = str(header.get("ciphertext", "")).strip()
+
+        if not target or not ciphertext:
+            self._send_to(username, {"type": "error", "text": "E2E whisper 대상과 암호문이 필요합니다."})
+            return
+
+        with self._clients_lock:
+            target_exists = target in self._clients
+            sender_e2e = self._client_e2e_keys.get(username)
+            target_e2e = self._client_e2e_keys.get(target)
+
+        if not target_exists:
+            self._send_to(username, {"type": "error", "text": f"{target} 사용자를 찾을 수 없습니다."})
+            return
+        if sender_e2e is None:
+            self._send_to(username, {"type": "error", "text": "송신자의 E2E 공개키가 등록되지 않았습니다."})
+            return
+        if target_e2e is None:
+            self._send_to(username, {"type": "error", "text": f"{target} 사용자의 E2E 공개키가 없습니다."})
+            return
+
+        self._record_message()
+        packet = {
+            "type": "e2e_whisper",
+            "from": username,
+            "to": target,
+            "sender_e2e_public_key": sender_e2e.public_key,
+            "sender_e2e_fingerprint": sender_e2e.fingerprint,
+            "recipient_e2e_fingerprint": target_e2e.fingerprint,
+            "ciphertext": ciphertext,
+            "algorithm": E2E_ALGORITHM,
+            "e2e_version": E2E_VERSION,
+        }
+        self._send_to(target, packet)
+        logger.info(
+            "[E2E] %s -> %s: ciphertext=%s bytes=%s",
+            username,
+            target,
+            ciphertext_preview(ciphertext),
+            len(ciphertext),
+        )
 
     def _handle_image(self, username: str, header: dict, payload: bytes) -> None:
         target = str(header.get("to", "전체")).strip() or "전체"

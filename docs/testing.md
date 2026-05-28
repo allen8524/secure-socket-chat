@@ -30,7 +30,8 @@ bandit -r secure_chat
 |---|---|---|
 | 프로토콜 단위 테스트 | `tests/test_protocol.py`, `tests/test_protocol_invalid_packets.py` | packet packing/unpacking, header/payload 크기 제한, 깨진 JSON, payload 길이 불일치 |
 | 암호화 채널 테스트 | `tests/test_crypto_channel.py`, `tests/test_sequence_replay.py` | PyNaCl Box 송수신, sequence 증가, replay/비정상 sequence 차단 |
-| 통합 채팅 테스트 | `tests/test_integration_chat.py` | 실제 서버 thread와 headless client를 연결해 전체 채팅, users 목록, 귓속말, 오류 응답 검증 |
+| E2E whisper 테스트 | `tests/test_e2e.py`, `tests/test_server_e2e.py` | E2E keypair, public key encode/decode, inner payload 암호화/복호화, outer packet 평문 미포함, 서버 E2E 오류 응답 검증 |
+| 통합 채팅 테스트 | `tests/test_integration_chat.py` | 실제 서버 thread와 headless client를 연결해 전체 채팅, users 목록, 일반 귓속말, 실험적 E2E whisper, 오류 응답 검증 |
 | 통합 파일 테스트 | `tests/test_integration_file_transfer.py` | 실제 서버를 통한 file/image payload 라우팅과 SHA-256 무결성 검증 |
 | TOFU 테스트 | `tests/test_trust_store.py` | 임시 trust store에서 최초 등록, 동일 fingerprint, 변경 감지, 깨진 JSON, host:port 분리 저장 검증 |
 | GUI 상태 helper 테스트 | `tests/test_gui_dashboard.py`, `tests/test_packet_inspector.py` | Security Dashboard와 Packet Inspector에 표시되는 요약 상태 검증 |
@@ -44,7 +45,7 @@ bandit -r secure_chat
 
 ## 수동 확인 항목
 
-자동 테스트는 프로토콜, 암호화, 파일 전송, TOFU, replay 방어를 검증합니다. 다음 항목은 별도 수동 확인이 필요합니다.
+자동 테스트는 프로토콜, 암호화, 실험적 E2E whisper, 파일 전송, TOFU, replay 방어를 검증합니다. 다음 항목은 별도 수동 확인이 필요합니다.
 
 - `python demo.py` 원클릭 데모 출력
 - `python run_server.py`
@@ -52,6 +53,7 @@ bandit -r secure_chat
 - `python run_client.py --name bob`
 - GUI 파일 선택 대화상자와 위험 확장자 경고창
 - Security Dashboard와 Packet Inspector의 실제 화면 배치
+- `/e2e 사용자명 메시지` 입력과 `E2E 전송` 버튼의 실제 GUI 표시 상태
 
 ## CI 연동
 

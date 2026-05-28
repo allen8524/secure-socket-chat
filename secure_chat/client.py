@@ -12,8 +12,17 @@ from typing import Any, Callable
 
 from secure_chat.config import DEFAULT_HOST, DEFAULT_PORT, MAX_PAYLOAD_SIZE
 from secure_chat.crypto_channel import PacketSequenceError, ReplayAttackError, SecureChannel, create_client_channel
+from secure_chat.e2e import (
+    E2E_ALGORITHM,
+    E2E_VERSION,
+    E2EEncryptionError,
+    build_inner_payload,
+    decrypt_inner_payload,
+    encrypt_inner_payload,
+    generate_e2e_identity,
+)
 from secure_chat.file_transfer import build_file_header, calculate_sha256, format_file_size
-from secure_chat.packet_inspector import PacketInspectionEvent
+from secure_chat.packet_inspector import PacketInspectionEvent, build_packet_inspection_event
 from secure_chat.security import ChannelMetadata, sha256_hex
 from secure_chat.trust_store import TrustCheckResult, check_server_fingerprint, trust_server_fingerprint
 
@@ -49,6 +58,9 @@ class ChatClient:
         self._sent_packet_count = 0
         self._received_packet_count = 0
         self._last_received_message_type = "-"
+        self.e2e_identity = generate_e2e_identity()
+        self.e2e_key_cache: dict[str, dict[str, str]] = {}
+        self._last_e2e_decrypt_result = "Not checked"
 
     @property
     def connected(self) -> bool:
@@ -106,6 +118,21 @@ class ChatClient:
             return "Not checked"
         return self._channel.last_replay_status
 
+    @property
+    def e2e_available(self) -> str:
+        return "Available" if self.e2e_identity.public_key else "Unavailable"
+
+    @property
+    def e2e_fingerprint(self) -> str:
+        return self.e2e_identity.fingerprint
+
+    @property
+    def last_e2e_decrypt_result(self) -> str:
+        return self._last_e2e_decrypt_result
+
+    def get_e2e_metadata(self, username: str) -> dict[str, str] | None:
+        return self.e2e_key_cache.get(username)
+
     def security_report(self) -> str:
         metadata = self.security_metadata
         if metadata is None:
@@ -126,6 +153,9 @@ class ChatClient:
             f"replay={self.last_replay_status} | "
             f"server_trust={self.server_trust_status} | "
             f"tofu={self.tofu_verification} | "
+            f"e2e={self.e2e_available} | "
+            f"e2e_fp={self.e2e_fingerprint} | "
+            f"last_e2e={self.last_e2e_decrypt_result} | "
             f"last_received={self._last_received_message_type}"
         )
 
@@ -141,7 +171,14 @@ class ChatClient:
         self._channel = create_client_channel(self._sock, inspection_callback=self.packet_events.put)
         self._verify_server_trust(trust_decider)
         self.connected_at = datetime.now()
-        self._send({"type": "join", "username": self.username})
+        self._send(
+            {
+                "type": "join",
+                "username": self.username,
+                "e2e_public_key": self.e2e_identity.public_key,
+                "e2e_fingerprint": self.e2e_identity.fingerprint,
+            }
+        )
 
         self._running.set()
         self._receiver_thread = threading.Thread(target=self._receive_loop, daemon=True)
@@ -153,6 +190,38 @@ class ChatClient:
 
     def send_whisper(self, target: str, text: str) -> None:
         self._send({"type": "whisper", "to": target, "text": text})
+
+    def send_e2e_whisper(self, target: str, text: str) -> None:
+        normalized_target = target.strip()
+        message = text.strip()
+        if not normalized_target or normalized_target == "전체":
+            raise ValueError("E2E whisper 대상 사용자를 선택해야 합니다.")
+        if not message:
+            raise ValueError("E2E whisper 내용을 입력해야 합니다.")
+
+        recipient_metadata = self.e2e_key_cache.get(normalized_target)
+        if not recipient_metadata or not recipient_metadata.get("public_key"):
+            raise ValueError(f"{normalized_target} 사용자의 E2E 공개키를 찾을 수 없습니다.")
+
+        inner_payload = build_inner_payload(self.username, normalized_target, message)
+        ciphertext = encrypt_inner_payload(
+            self.e2e_identity.private_key,
+            recipient_metadata["public_key"],
+            inner_payload,
+        )
+        self._send(
+            {
+                "type": "e2e_whisper",
+                "to": normalized_target,
+                "from": self.username,
+                "sender_e2e_public_key": self.e2e_identity.public_key,
+                "sender_e2e_fingerprint": self.e2e_identity.fingerprint,
+                "recipient_e2e_fingerprint": recipient_metadata.get("fingerprint", ""),
+                "ciphertext": ciphertext,
+                "algorithm": E2E_ALGORITHM,
+                "e2e_version": E2E_VERSION,
+            }
+        )
 
     def send_image(self, target: str, file_path: str | Path) -> str:
         path = Path(file_path)
@@ -299,6 +368,10 @@ class ChatClient:
                     break
                 self._received_packet_count += 1
                 self._last_received_message_type = str(header.get("type", "unknown"))
+                if header.get("type") == "users":
+                    self._update_e2e_key_cache(header)
+                elif header.get("type") == "e2e_whisper":
+                    header = self._decrypt_e2e_whisper(header)
                 self.inbox.put((header, payload))
             except ReplayAttackError:
                 self.inbox.put(({"type": "security_warning", "text": "replay 의심 패킷 차단"}, b""))
@@ -313,3 +386,66 @@ class ChatClient:
                 break
 
         self._running.clear()
+
+    def _update_e2e_key_cache(self, header: dict[str, Any]) -> None:
+        raw_keys = header.get("e2e_keys", {})
+        if not isinstance(raw_keys, dict):
+            return
+
+        cache: dict[str, dict[str, str]] = {}
+        for username, metadata in raw_keys.items():
+            if not isinstance(username, str) or not isinstance(metadata, dict):
+                continue
+            public_key = str(metadata.get("public_key", "")).strip()
+            fingerprint = str(metadata.get("fingerprint", "")).strip()
+            if public_key and fingerprint:
+                cache[username] = {"public_key": public_key, "fingerprint": fingerprint}
+
+        self.e2e_key_cache = cache
+
+    def _decrypt_e2e_whisper(self, header: dict[str, Any]) -> dict[str, Any]:
+        sender_public_key = str(header.get("sender_e2e_public_key", ""))
+        ciphertext = str(header.get("ciphertext", ""))
+        try:
+            inner = decrypt_inner_payload(self.e2e_identity.private_key, sender_public_key, ciphertext)
+        except E2EEncryptionError:
+            self._last_e2e_decrypt_result = "FAIL"
+            self._emit_e2e_inspection_result(header, "FAIL", "failed to decrypt E2E payload")
+            return {
+                "type": "security_warning",
+                "text": "E2E 메시지 복호화 실패",
+                "from": header.get("from", ""),
+                "to": header.get("to", ""),
+            }
+
+        self._last_e2e_decrypt_result = "OK"
+        self._emit_e2e_inspection_result(header, "OK")
+        return {
+            "type": "e2e_whisper",
+            "from": str(inner.get("from", header.get("from", ""))),
+            "to": str(inner.get("to", header.get("to", ""))),
+            "text": str(inner.get("text", "")),
+            "created_at": str(inner.get("created_at", "")),
+            "sender_e2e_fingerprint": str(header.get("sender_e2e_fingerprint", "")),
+            "recipient_e2e_fingerprint": str(header.get("recipient_e2e_fingerprint", "")),
+            "algorithm": str(header.get("algorithm", E2E_ALGORITHM)),
+            "e2e_version": header.get("e2e_version", E2E_VERSION),
+        }
+
+    def _emit_e2e_inspection_result(
+        self,
+        header: dict[str, Any],
+        result: str,
+        error_message: str = "-",
+    ) -> None:
+        event_header = dict(header)
+        event_header["e2e_decrypt"] = result
+        self.packet_events.put(
+            build_packet_inspection_event(
+                direction="INBOUND",
+                header=event_header,
+                decrypt_success=(result == "OK"),
+                replay_status=self.last_replay_status,
+                error_message=error_message,
+            )
+        )

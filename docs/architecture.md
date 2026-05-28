@@ -34,6 +34,7 @@ flowchart LR
 | Protocol | `secure_chat/protocol.py` | 4-byte length prefix, JSON header, binary payload framing |
 | File Transfer | `secure_chat/file_transfer.py` | 파일 header 생성, SHA-256 계산, 파일 크기 표시, 위험 확장자 감지 |
 | Trust Store | `secure_chat/trust_store.py` | TOFU 기반 서버 fingerprint 저장 및 변경 감지 |
+| E2E Helpers | `secure_chat/e2e.py` | 실험적 1:1 E2E whisper용 키 생성, inner payload 암호화/복호화 |
 | Packet Inspector | `secure_chat/packet_inspector.py` | 암호화 전 logical packet과 암호화 후 transport packet의 안전한 요약 생성 |
 
 ## 3. 클라이언트-서버 암호화 채널 구조
@@ -121,7 +122,32 @@ sequenceDiagram
 
 Packet Inspector는 이 과정에서 logical packet type, sequence, payload size, encrypted packet size, ciphertext preview 같은 요약 정보를 표시합니다. 메시지 전문, 전체 암호문, 파일 binary는 표시하지 않습니다.
 
-## 6. 파일 전송 및 무결성 검증 흐름
+## 6. 실험적 E2E whisper 흐름
+
+실험적 E2E whisper mode는 기존 클라이언트-서버 transport SecureChannel을 유지한 채, 1:1 텍스트 whisper 본문만 수신자 E2E public key로 추가 암호화합니다. 서버는 outer packet의 송신자, 수신자, fingerprint, ciphertext 크기 같은 metadata를 보고 라우팅하지만 inner payload의 `text`는 복호화하지 않습니다.
+
+```mermaid
+sequenceDiagram
+    participant A as Alice Client
+    participant S as Server
+    participant B as Bob Client
+
+    A->>A: 세션 단위 E2E keypair 생성
+    B->>B: 세션 단위 E2E keypair 생성
+    A-->>S: join packet에 Alice E2E public key 등록
+    B-->>S: join packet에 Bob E2E public key 등록
+    S-->>A: users packet으로 Bob E2E key metadata 전달
+    A->>A: Bob E2E public key로 inner payload 암호화
+    A-->>S: e2e_whisper outer packet 전송
+    S->>S: 본문 복호화 없이 대상 확인
+    S-->>B: e2e_whisper outer packet 라우팅
+    B->>B: Alice E2E public key와 Bob private key로 inner payload 복호화
+    B->>B: GUI에 E2E 메시지 표시
+```
+
+이번 범위에서 E2E는 `/e2e 사용자명 메시지` 또는 GUI의 `E2E 전송` 버튼으로 보내는 1:1 텍스트 whisper에만 적용됩니다. 전체 채팅 broadcast와 파일/이미지 전송은 E2E 대상이 아닙니다.
+
+## 7. 파일 전송 및 무결성 검증 흐름
 
 이미지와 일반 파일은 binary payload를 사용합니다. 송신자는 payload의 SHA-256 해시를 header에 포함하고, 수신자는 payload를 다시 해시해 header 값과 비교합니다.
 
@@ -148,25 +174,28 @@ sequenceDiagram
 
 파일명은 저장 전에 정규화해 path traversal 가능성을 줄입니다. SHA-256 검증은 전송 중 payload 변경 여부를 확인하는 용도이며, 파일 내용 자체가 안전하다는 의미는 아닙니다.
 
-## 7. 서버의 역할과 한계
+## 8. 서버의 역할과 한계
 
 | 항목 | 설명 |
 |---|---|
 | 접속 관리 | 클라이언트별 socket과 SecureChannel을 관리하고 중복 사용자명을 차단합니다. |
 | 라우팅 | `chat`, `whisper`, `image`, `file` packet을 대상 사용자 또는 전체 사용자에게 전달합니다. |
 | 재암호화 | 수신 클라이언트 채널에서 복호화한 뒤 대상 클라이언트 채널로 다시 암호화합니다. |
+| E2E 라우팅 | `e2e_whisper` outer packet은 inner ciphertext를 복호화하지 않고 대상 클라이언트에게 전달합니다. |
 | 통계 | uptime, 접속자 수, 메시지/이미지/파일 전송량을 집계합니다. |
-| 한계 | 서버가 라우팅 과정에서 메시지와 파일 metadata를 복호화하므로 서버를 신뢰 경계 안에 둡니다. |
+| 한계 | 일반 chat/whisper/file/image는 서버가 라우팅 과정에서 복호화합니다. E2E whisper도 송신자, 수신자, packet size 같은 metadata는 서버가 볼 수 있습니다. |
 
-이 한계 때문에 현재 구현을 서버가 메시지 내용을 볼 수 없는 구조로 설명하면 안 됩니다. 이 프로젝트의 보안 목표는 네트워크 구간에서 평문 노출과 비정상 패킷 처리 위험을 줄이는 데 있습니다.
+이 한계 때문에 프로젝트 전체를 서버가 모든 메시지 내용을 볼 수 없는 구조로 설명하면 안 됩니다. 실험적 E2E whisper는 1:1 텍스트 본문에 한정된 추가 보호이고, 기본 보안 목표는 네트워크 구간에서 평문 노출과 비정상 패킷 처리 위험을 줄이는 데 있습니다.
 
-## 8. 향후 확장 방향
+## 9. 향후 확장 방향
 
 | 확장 방향 | 설명 |
 |---|---|
 | 서버 키 영속화 | 재시작 후에도 동일 fingerprint를 유지해 TOFU 경고를 더 의미 있게 만들 수 있습니다. |
 | 키 핀닝 또는 인증서 검증 | 최초 접속 신뢰 문제를 줄이고 서버 인증을 강화할 수 있습니다. |
-| 실험적 E2E 모드 | 서버가 메시지 내용을 복호화하지 않는 별도 통신 구조를 실험할 수 있습니다. |
+| 사용자 E2E fingerprint TOFU | 사용자별 E2E fingerprint 변경을 감지해 key substitution 위험을 줄일 수 있습니다. |
+| E2E key pinning 또는 QR verification | 외부 채널에서 fingerprint를 비교해 사용자 E2E key 신뢰를 강화할 수 있습니다. |
+| E2E 대상 확장 | 전체 채팅이나 파일 전송에 E2E를 적용하는 별도 구조를 실험할 수 있습니다. |
 | 파일 전송 정책 고도화 | 확장자 차단, 다운로드 승인, 저장 위치 정책을 더 세밀하게 만들 수 있습니다. |
 | 관찰 도구 개선 | Packet Inspector와 보안 로그를 연동해 비정상 패킷 분석을 강화할 수 있습니다. |
 

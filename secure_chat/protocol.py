@@ -169,6 +169,11 @@ def packet_summary(header: dict[str, Any], payload: bytes = b"") -> str:
             text = text[:80] + "..."
         return f"type={msg_type}, text={text}"
 
+    if msg_type == "e2e_whisper":
+        target = str(header.get("to", ""))
+        ciphertext = str(header.get("ciphertext", ""))
+        return f"type=e2e_whisper, to={target}, ciphertext_bytes={len(ciphertext)}"
+
     if msg_type == "image":
         filename = str(header.get("filename", "image.bin"))
         return f"type=image, filename={filename}, bytes={len(payload)}"

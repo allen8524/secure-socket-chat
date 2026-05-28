@@ -103,6 +103,20 @@ def summarize_logical_header(header: dict[str, Any], payload_size: int = 0) -> s
             f"sha256={hash_preview(header)}"
         )
 
+    if msg_type == "e2e_whisper":
+        ciphertext = str(header.get("ciphertext", ""))
+        return (
+            "type=e2e_whisper, "
+            f"sequence={sequence}, "
+            f"from={truncate_value(header.get('from', '-'), 18)!r}, "
+            f"to={truncate_value(header.get('to', '-'), 18)!r}, "
+            f"sender_fp={truncate_value(header.get('sender_e2e_fingerprint', '-'), 24)!r}, "
+            f"recipient_fp={truncate_value(header.get('recipient_e2e_fingerprint', '-'), 24)!r}, "
+            f"ciphertext_size={len(ciphertext)}, "
+            f"ciphertext_preview={truncate_value(ciphertext, 32)!r}, "
+            f"e2e_decrypt={truncate_value(header.get('e2e_decrypt', 'Not checked'), 18)!r}"
+        )
+
     if msg_type == "users":
         users = header.get("users", [])
         user_count = len(users) if isinstance(users, list) else 0

@@ -24,6 +24,10 @@ def test_security_dashboard_state_defaults_without_client():
     assert state.last_replay_status == "Not checked"
     assert state.server_trust_status == "Unknown"
     assert state.tofu_verification == "Unknown"
+    assert state.e2e_mode == "Unavailable"
+    assert state.e2e_fingerprint == "-"
+    assert state.selected_e2e_fingerprint == "-"
+    assert state.last_e2e_decrypt_result == "Not checked"
 
 
 def test_security_dashboard_state_uses_client_metadata_and_counters():
@@ -46,10 +50,17 @@ def test_security_dashboard_state_uses_client_metadata_and_counters():
         last_replay_status="OK sequence=6",
         server_trust_status="Trusted",
         tofu_verification="OK",
+        e2e_available="Available",
+        e2e_fingerprint="AA:AA:AA:BB:BB:BB:CC:CC",
+        last_e2e_decrypt_result="OK",
         last_received_message_type="image",
     )
 
-    state = build_security_dashboard_state(client, last_file_integrity="OK")
+    state = build_security_dashboard_state(
+        client,
+        last_file_integrity="OK",
+        selected_e2e_fingerprint="DD:DD:DD:EE:EE:EE:FF:FF",
+    )
 
     assert state.connection_state == "Connected"
     assert state.encryption_state == "Active"
@@ -66,5 +77,9 @@ def test_security_dashboard_state_uses_client_metadata_and_counters():
     assert state.last_replay_status == "OK sequence=6"
     assert state.server_trust_status == "Trusted"
     assert state.tofu_verification == "OK"
+    assert state.e2e_mode == "Available"
+    assert state.e2e_fingerprint == "AA:AA:AA:...:CC:CC"
+    assert state.selected_e2e_fingerprint == "DD:DD:DD:...:FF:FF"
+    assert state.last_e2e_decrypt_result == "OK"
     assert state.last_file_integrity == "OK"
     assert state.last_received_message_type == "image"

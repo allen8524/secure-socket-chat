@@ -30,13 +30,14 @@ bandit -r secure_chat
 
 ## 자동 검증과 수동 검증의 경계
 
-CI는 GUI 창을 띄우지 않습니다. 통합 테스트는 headless client와 임시 TCP port를 사용해 채팅, 귓속말, 파일 전송, SHA-256 검증, replay 방어, TOFU 로직을 검증합니다.
+CI는 GUI 창을 띄우지 않습니다. 통합 테스트는 headless client와 임시 TCP port를 사용해 채팅, 일반 귓속말, 실험적 E2E whisper, 파일 전송, SHA-256 검증, replay 방어, TOFU 로직을 검증합니다.
 
 다음 항목은 수동 확인 대상입니다.
 
 - Tkinter GUI 화면 배치
 - 파일 선택 대화상자와 위험 확장자 경고창
 - Security Dashboard와 Packet Inspector의 실제 표시 상태
+- E2E 전송 버튼과 `/e2e` 명령의 실제 GUI 표시 상태
 - `python demo.py` 출력 흐름
 
 ## Bandit 경고 관리

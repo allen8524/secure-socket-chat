@@ -39,6 +39,10 @@ class SecurityDashboardState:
     last_replay_status: str = "Not checked"
     server_trust_status: str = "Unknown"
     tofu_verification: str = "Unknown"
+    e2e_mode: str = "Unavailable"
+    e2e_fingerprint: str = "-"
+    selected_e2e_fingerprint: str = "-"
+    last_e2e_decrypt_result: str = "Not checked"
     last_file_integrity: str = "N/A"
     last_received_message_type: str = "-"
 
@@ -62,6 +66,7 @@ def _format_datetime(value: Any) -> str:
 def build_security_dashboard_state(
     client: Any | None,
     last_file_integrity: str = "N/A",
+    selected_e2e_fingerprint: str = "-",
 ) -> SecurityDashboardState:
     metadata = getattr(client, "security_metadata", None) if client is not None else None
     connected = bool(client is not None and getattr(client, "connected", False))
@@ -69,6 +74,7 @@ def build_security_dashboard_state(
 
     if metadata is None:
         return SecurityDashboardState(
+            selected_e2e_fingerprint=selected_e2e_fingerprint,
             last_file_integrity=last_file_integrity,
         )
 
@@ -89,6 +95,10 @@ def build_security_dashboard_state(
         last_replay_status=str(getattr(client, "last_replay_status", "Not checked") or "Not checked"),
         server_trust_status=str(getattr(client, "server_trust_status", "Unknown") or "Unknown"),
         tofu_verification=str(getattr(client, "tofu_verification", "Unknown") or "Unknown"),
+        e2e_mode=str(getattr(client, "e2e_available", "Unavailable") or "Unavailable"),
+        e2e_fingerprint=compact_fingerprint(str(getattr(client, "e2e_fingerprint", "-") or "-")),
+        selected_e2e_fingerprint=compact_fingerprint(selected_e2e_fingerprint),
+        last_e2e_decrypt_result=str(getattr(client, "last_e2e_decrypt_result", "Not checked") or "Not checked"),
         last_file_integrity=last_file_integrity,
         last_received_message_type=str(getattr(client, "last_received_message_type", "-") or "-"),
     )
@@ -136,6 +146,7 @@ class ChatApp:
         self._refresh_security_panel()
         self._add_chat_line("[보안] PyNaCl 공개키 교환 후 암호화 채널로 통신 중")
         self._add_chat_line("[보안] /security 명령어로 세션 fingerprint를 확인할 수 있습니다.")
+        self._add_chat_line("[보안] /e2e 사용자명 메시지로 실험적 E2E whisper를 보낼 수 있습니다.")
         self._add_chat_line("[사용법] /help 명령어로 사용 가능한 기능을 확인하세요.")
         self._process_messages()
         self.input_box.focus()
@@ -155,6 +166,7 @@ class ChatApp:
         self.user_list.pack(fill=tk.X)
         self.user_list.insert(tk.END, "전체")
         self.user_list.selection_set(0)
+        self.user_list.bind("<<ListboxSelect>>", self._on_user_selection_changed)
 
         hint_label = tk.Label(
             left_frame,
@@ -182,6 +194,10 @@ class ChatApp:
             ("replay_status", "Replay 검증"),
             ("server_trust", "서버 신뢰 상태"),
             ("tofu_result", "TOFU 검증"),
+            ("e2e_mode", "E2E 모드"),
+            ("e2e_fp", "내 E2E FP"),
+            ("target_e2e_fp", "대상 E2E FP"),
+            ("e2e_decrypt", "E2E 복호화"),
             ("file_integrity", "파일 무결성"),
             ("last_type", "마지막 수신 유형"),
         ]
@@ -241,6 +257,9 @@ class ChatApp:
 
         send_button = tk.Button(bottom_frame, text="전송", width=10, command=self._send_message)
         send_button.pack(side=tk.LEFT, padx=(0, 6))
+
+        e2e_button = tk.Button(bottom_frame, text="E2E 전송", width=10, command=self._send_e2e_message)
+        e2e_button.pack(side=tk.LEFT, padx=(0, 6))
 
         image_button = tk.Button(bottom_frame, text="이미지", width=10, command=self._send_image)
         image_button.pack(side=tk.LEFT, padx=(0, 6))
@@ -309,6 +328,18 @@ class ChatApp:
             return "전체"
         return self.user_list.get(selection[0])
 
+    def _selected_target_e2e_fingerprint(self) -> str:
+        if self.client is None:
+            return "-"
+        target = self._selected_target()
+        metadata = self.client.get_e2e_metadata(target)
+        if not metadata:
+            return "-"
+        return metadata.get("fingerprint", "-")
+
+    def _on_user_selection_changed(self, _event: object | None = None) -> None:
+        self._refresh_security_panel()
+
     def _update_user_list(self, users: list[str]) -> None:
         self.online_users = users
         current_target = self._selected_target()
@@ -326,6 +357,7 @@ class ChatApp:
                 break
 
         self.status_text.set(f"Online: {len(users)}명 | Target: {target_to_select}")
+        self._refresh_security_panel()
 
     def _add_chat_line(self, text: str) -> None:
         self.transcript_lines.append(text)
@@ -358,6 +390,8 @@ class ChatApp:
                 self._add_chat_line(f"[전체] {header.get('from', '')}: {header.get('text', '')}")
             elif msg_type == "whisper":
                 self._add_chat_line(f"[귓속말] {header.get('from', '')} -> {header.get('to', '')}: {header.get('text', '')}")
+            elif msg_type == "e2e_whisper":
+                self._add_chat_line(f"[E2E] {header.get('from', '')} -> {header.get('to', '')}: {header.get('text', '')}")
             elif msg_type == "image":
                 self._handle_received_image(header, payload)
             elif msg_type == "file":
@@ -456,6 +490,19 @@ class ChatApp:
                 self._refresh_security_panel()
                 return
 
+            if text.startswith("/e2e "):
+                parts = text.split(" ", 2)
+                if len(parts) < 3:
+                    self._add_chat_line("[사용법] /e2e 사용자명 메시지")
+                    return
+                target = parts[1].strip()
+                message = parts[2].strip()
+                self.client.send_e2e_whisper(target, message)
+                self._add_chat_line(f"[E2E 전송] {self.username} -> {target}: {message}")
+                self._drain_packet_inspection_events()
+                self._refresh_security_panel()
+                return
+
             target = self._selected_target()
             if target != "전체" and target != self.username:
                 self.client.send_whisper(target, text)
@@ -467,11 +514,15 @@ class ChatApp:
             self._drain_packet_inspection_events()
             self._add_chat_line("[오류] 메시지 전송 실패")
             self._refresh_security_panel()
+        except ValueError as exc:
+            self._drain_packet_inspection_events()
+            self._add_chat_line(f"[오류] {exc}")
+            self._refresh_security_panel()
 
     def _handle_local_command(self, text: str) -> bool:
         command = text.lower().strip()
         if command == "/help":
-            self._add_chat_line("[명령어] /w 이름 메시지 | /users | /security | /stats | /save | /clear | end")
+            self._add_chat_line("[명령어] /w 이름 메시지 | /e2e 이름 메시지 | /users | /security | /stats | /save | /clear | end")
             return True
         if command == "/users":
             users = ", ".join(self.online_users) or "없음"
@@ -490,6 +541,29 @@ class ChatApp:
             self._clear_chat()
             return True
         return False
+
+    def _send_e2e_message(self) -> None:
+        if self.client is None:
+            return
+
+        target = self._selected_target()
+        text = self.input_box.get().strip()
+        if not text:
+            return
+
+        try:
+            self.client.send_e2e_whisper(target, text)
+            self.input_box.delete(0, tk.END)
+            self._add_chat_line(f"[E2E 전송] {self.username} -> {target}: {text}")
+            self._drain_packet_inspection_events()
+            self._refresh_security_panel()
+        except ValueError as exc:
+            self._add_chat_line(f"[오류] {exc}")
+            self._refresh_security_panel()
+        except OSError:
+            self._drain_packet_inspection_events()
+            self._add_chat_line("[오류] E2E 메시지 전송 실패")
+            self._refresh_security_panel()
 
     def _send_image(self) -> None:
         if self.client is None:
@@ -595,7 +669,11 @@ class ChatApp:
         self.packet_inspector_text.config(state=tk.DISABLED)
 
     def _refresh_security_panel(self) -> None:
-        state = build_security_dashboard_state(self.client, self.last_file_integrity_result)
+        state = build_security_dashboard_state(
+            self.client,
+            self.last_file_integrity_result,
+            selected_e2e_fingerprint=self._selected_target_e2e_fingerprint(),
+        )
         self.security_dashboard_state = state
 
         values = {
@@ -614,6 +692,10 @@ class ChatApp:
             "replay_status": state.last_replay_status,
             "server_trust": state.server_trust_status,
             "tofu_result": state.tofu_verification,
+            "e2e_mode": state.e2e_mode,
+            "e2e_fp": state.e2e_fingerprint,
+            "target_e2e_fp": state.selected_e2e_fingerprint,
+            "e2e_decrypt": state.last_e2e_decrypt_result,
             "file_integrity": state.last_file_integrity,
             "last_type": state.last_received_message_type,
         }

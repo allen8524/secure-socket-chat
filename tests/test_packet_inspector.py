@@ -83,3 +83,24 @@ def test_packet_inspection_event_formats_safe_fields():
     assert "encrypted packet size:" in rendered
     assert "decrypt: N/A" in rendered
     assert "secret message body that should be shortened" not in rendered
+
+
+def test_e2e_whisper_summary_hides_inner_plaintext():
+    header = {
+        "type": "e2e_whisper",
+        "from": "alice",
+        "to": "bob",
+        "sender_e2e_fingerprint": "AA:BB:CC:DD",
+        "recipient_e2e_fingerprint": "11:22:33:44",
+        "ciphertext": "abc123" * 20,
+        "sequence": 9,
+    }
+
+    summary = summarize_logical_header(header)
+
+    assert "type=e2e_whisper" in summary
+    assert "from='alice'" in summary
+    assert "to='bob'" in summary
+    assert "ciphertext_size=" in summary
+    assert "hello" not in summary
+    assert "text=" not in summary
