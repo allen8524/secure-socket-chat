@@ -181,7 +181,8 @@ secure-socket-chat/
 ## 테스트 실행
 
 ```bash
-pytest
+pip install -r requirements.txt
+pytest -q
 ```
 
 테스트 범위는 다음과 같습니다.
@@ -190,12 +191,17 @@ pytest
 - payload 크기 제한 검증
 - 잘못된 패킷 방어 검증
 - PyNaCl Box 암호화/복호화 검증
+- 실제 서버/클라이언트 통합 채팅 라우팅 검증
+- 1:1 귓속말 라우팅 및 오류 응답 검증
+- 파일/이미지 전송과 SHA-256 무결성 검증
+- sequence number 기반 replay 방어 검증
+- TOFU trust store 저장/변경 감지 검증
 - 수신 파일명 정규화 검증
 - 파일 전송 helper 및 SHA-256 검증 테스트
 - 공개키 fingerprint 및 session id 생성 검증
-- TOFU 서버 fingerprint 저장/검증 테스트
-- sequence number 기반 replay 방어 테스트
 - SHA-256 해시 검증
+
+자동 테스트는 GUI를 띄우지 않고 headless 네트워크 클라이언트를 사용합니다. Tkinter GUI 화면, 버튼 배치, 실제 파일 선택 대화상자는 수동 확인 대상입니다.
 
 ## 아키텍처
 
