@@ -63,6 +63,16 @@ def _format_datetime(value: Any) -> str:
     return "-"
 
 
+def format_e2e_fingerprint_message(username: str, fingerprint: str) -> str:
+    return (
+        "[E2E Fingerprint]\n"
+        f"사용자: {username}\n"
+        f"fingerprint: {fingerprint}\n"
+        "설명: 이 값은 해당 클라이언트의 현재 세션 E2E 공개키 fingerprint입니다.\n"
+        "주의: 세션 단위 E2E key이므로 재접속 시 바뀔 수 있으며, 인증기관 기반 인증을 제공하지는 않습니다."
+    )
+
+
 def build_security_dashboard_state(
     client: Any | None,
     last_file_integrity: str = "N/A",
@@ -219,6 +229,7 @@ class ChatApp:
         command_frame.pack(fill=tk.X, pady=(12, 0))
 
         tk.Button(command_frame, text="보안정보", command=self._show_security_report).pack(fill=tk.X)
+        tk.Button(command_frame, text="E2E FP 확인", command=self._show_selected_fingerprint).pack(fill=tk.X, pady=(5, 0))
         tk.Button(command_frame, text="서버통계", command=self._request_stats).pack(fill=tk.X, pady=(5, 0))
         tk.Button(command_frame, text="대화저장", command=self._export_transcript).pack(fill=tk.X, pady=(5, 0))
         tk.Button(command_frame, text="화면지우기", command=self._clear_chat).pack(fill=tk.X, pady=(5, 0))
@@ -522,7 +533,17 @@ class ChatApp:
     def _handle_local_command(self, text: str) -> bool:
         command = text.lower().strip()
         if command == "/help":
-            self._add_chat_line("[명령어] /w 이름 메시지 | /e2e 이름 메시지 | /users | /security | /stats | /save | /clear | end")
+            self._add_chat_line(
+                "[명령어] /w 이름 메시지 | /e2e 이름 메시지 | /fingerprint 이름 | "
+                "/users | /security | /stats | /save | /clear | end"
+            )
+            return True
+        if command.startswith("/fingerprint"):
+            parts = text.split(maxsplit=1)
+            if len(parts) < 2 or not parts[1].strip():
+                self._add_chat_line("[사용법] /fingerprint 사용자명")
+                return True
+            self._show_fingerprint_for_user(parts[1].strip(), use_popup=False)
             return True
         if command == "/users":
             users = ", ".join(self.online_users) or "없음"
@@ -564,6 +585,54 @@ class ChatApp:
             self._drain_packet_inspection_events()
             self._add_chat_line("[오류] E2E 메시지 전송 실패")
             self._refresh_security_panel()
+
+    def _show_selected_fingerprint(self) -> None:
+        target = self._selected_target()
+        if target == "전체":
+            message = "E2E fingerprint는 개별 사용자 선택 시 확인할 수 있습니다."
+            messagebox.showinfo("E2E Fingerprint", message, parent=self.win)
+            self._add_chat_line(f"[E2E Fingerprint] {message}")
+            return
+        self._show_fingerprint_for_user(target, use_popup=True)
+
+    def _show_fingerprint_for_user(self, username: str, use_popup: bool) -> None:
+        if self.client is None:
+            self._add_chat_line("[오류] 연결된 클라이언트가 없습니다.")
+            return
+
+        target = username.strip()
+        if not target:
+            self._add_chat_line("[사용법] /fingerprint 사용자명")
+            return
+
+        if target == "전체":
+            message = "E2E fingerprint는 개별 사용자 선택 시 확인할 수 있습니다."
+            self._add_chat_line(f"[E2E Fingerprint] {message}")
+            if use_popup:
+                messagebox.showinfo("E2E Fingerprint", message, parent=self.win)
+            return
+
+        if target == self.username:
+            message = format_e2e_fingerprint_message(target, self.client.e2e_fingerprint)
+        elif target not in self.online_users:
+            message = f"[오류] {target} 사용자를 찾을 수 없습니다."
+            self._add_chat_line(message)
+            if use_popup:
+                messagebox.showwarning("E2E Fingerprint", message, parent=self.win)
+            return
+        else:
+            metadata = self.client.get_e2e_metadata(target)
+            if not metadata or not metadata.get("fingerprint"):
+                message = f"[오류] {target} 사용자의 E2E fingerprint를 확인할 수 없습니다."
+                self._add_chat_line(message)
+                if use_popup:
+                    messagebox.showwarning("E2E Fingerprint", message, parent=self.win)
+                return
+            message = format_e2e_fingerprint_message(target, metadata["fingerprint"])
+
+        self._add_chat_line(message)
+        if use_popup:
+            messagebox.showinfo("E2E Fingerprint", message, parent=self.win)
 
     def _send_image(self) -> None:
         if self.client is None:

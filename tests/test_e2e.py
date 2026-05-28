@@ -98,3 +98,15 @@ def test_chat_client_e2e_outer_packet_does_not_include_plaintext(monkeypatch):
     assert outer["to"] == "bob"
     assert "text" not in outer
     assert plaintext not in str(outer)
+
+
+def test_chat_client_get_e2e_metadata_returns_cached_user_metadata():
+    client = ChatClient(username="alice")
+    bob = generate_e2e_identity()
+    client.e2e_key_cache["bob"] = {"public_key": bob.public_key, "fingerprint": bob.fingerprint}
+
+    assert client.get_e2e_metadata("bob") == {
+        "public_key": bob.public_key,
+        "fingerprint": bob.fingerprint,
+    }
+    assert client.get_e2e_metadata("missing") is None

@@ -58,6 +58,7 @@ SecureSocketChat은 운영 환경용 보안 메신저가 아니라, Python socke
 | SHA-256 기반 파일 무결성 검증 | 이미지/파일 binary payload | 전송된 payload가 header의 해시와 일치하는지 확인합니다. |
 | sequence number 기반 replay 방어 | 암호화 logical packet | 각 SecureChannel이 송신 sequence를 증가시키고, 수신 측은 마지막으로 처리한 sequence 이하의 패킷을 차단합니다. |
 | 실험적 E2E whisper mode | 1:1 텍스트 whisper 본문 | 클라이언트가 수신자 E2E public key로 inner payload를 암호화해 서버가 본문을 복호화하지 못하게 합니다. |
+| E2E fingerprint 확인 UX | E2E public key 식별 | `/fingerprint 사용자명`과 GUI 버튼으로 상대방의 현재 세션 E2E fingerprint를 확인할 수 있게 합니다. |
 | 파일명 정규화 | 수신 이미지/파일명 | 경로 요소 제거와 구분자 치환으로 디렉터리 경로 조작 가능성을 줄입니다. |
 | 위험 확장자 경고 | 송신 파일 선택 | 실행 파일 또는 스크립트로 보이는 파일을 보낼 때 사용자에게 경고합니다. |
 | 중복 사용자명 차단 | 사용자명 및 접속 상태 | 동일 이름 사용으로 인한 라우팅 혼동을 방지합니다. |
@@ -73,6 +74,7 @@ SecureSocketChat은 운영 환경용 보안 메신저가 아니라, Python socke
 | E2E metadata 노출 | 서버는 E2E 메시지 본문은 복호화하지 못하지만 송신자, 수신자, 전송 시각, packet size, E2E public key fingerprint 같은 metadata는 볼 수 있습니다. |
 | E2E key substitution 가능성 | 서버가 사용자 E2E public key를 배포하므로 악의적인 서버가 key substitution을 시도할 수 있습니다. 사용자 E2E fingerprint TOFU나 key pinning은 아직 적용되지 않았습니다. |
 | E2E key 영속화 미적용 | 클라이언트 E2E key는 세션 단위로 생성되므로 재접속 시 fingerprint가 바뀔 수 있습니다. |
+| Fingerprint 확인의 한계 | 현재 fingerprint 확인은 사용자가 직접 비교할 수 있게 돕는 UX이며, 인증기관 기반 인증이나 자동 key pinning을 제공하지 않습니다. |
 | 서버 인증 부재 | 인증기관(CA) 기반 서버 인증은 없습니다. 사용자는 접속한 서버가 기대한 서버인지 자동으로 검증하지 않습니다. |
 | TOFU의 최초 접속 한계 | 최초 접속 시 공격자가 개입하면 잘못된 fingerprint가 신뢰 저장소에 등록될 수 있습니다. |
 | 서버 키 영속화 미적용 | 현재 서버 공개키는 연결 단위로 새로 생성되므로, 재접속 시 fingerprint 변경 경고가 자주 발생할 수 있습니다. 운영형 신뢰 모델에는 서버 키 영속화가 필요합니다. |
@@ -104,6 +106,7 @@ SecureSocketChat은 운영 환경용 보안 메신저가 아니라, Python socke
 | 어떤 보안 문제를 고려했는가 | 네트워크 도청, payload 변조, replay attack, 비정상 크기 패킷, 파일명 경로 조작, 위험 확장자 파일, 중복 사용자명으로 인한 라우팅 혼동을 고려했습니다. |
 | 암호화 구조의 한계는 무엇인가 | 서버가 라우팅을 위해 메시지를 복호화하므로, 현재 구조는 클라이언트-서버 간 암호화 채널이며 서버를 신뢰 경계 안에 둡니다. |
 | E2E whisper는 무엇을 보호하는가 | `/e2e`로 보낸 1:1 텍스트 whisper 본문은 수신자 E2E public key로 추가 암호화되어 서버가 본문을 복호화하지 못합니다. 다만 metadata와 key substitution 한계는 남습니다. |
+| E2E fingerprint는 어떻게 확인하는가 | `/fingerprint 사용자명` 또는 GUI의 `E2E FP 확인` 버튼으로 상대방의 현재 세션 E2E fingerprint를 확인하고 별도 채널에서 비교할 수 있습니다. |
 | fingerprint 표시는 왜 필요한가 | 현재 세션에서 사용 중인 공개키 식별 정보를 사용자에게 보여주고, TOFU 저장소와 비교해 서버 fingerprint 변경을 인지할 수 있게 합니다. |
 | 테스트는 무엇을 검증하는가 | 패킷 packing/unpacking, header와 payload 크기 제한, sequence 증가와 replay 차단, 잘못된 패킷 방어, 암호화/복호화, SHA-256 해시 검증을 확인합니다. |
 | 다음 보안 개선은 무엇인가 | 서버 키 영속화, 키 핀닝 또는 인증서 검증, 사용자 E2E fingerprint TOFU, E2E 대상 확장, 통합 테스트 고도화를 우선순위로 설명할 수 있습니다. |

@@ -122,6 +122,8 @@ python run_client.py
 
 실험적 E2E whisper mode는 1:1 텍스트 whisper 본문만 대상으로 합니다. 전체 채팅 broadcast와 파일/이미지 전송은 현재 E2E 대상이 아니며, 서버는 E2E 메시지 본문은 복호화하지 못하지만 송신자, 수신자, 전송 시각, 패킷 크기 같은 metadata는 볼 수 있습니다.
 
+상대방 E2E 공개키 fingerprint는 `/fingerprint 사용자명` 명령어 또는 GUI의 `E2E FP 확인` 버튼으로 확인할 수 있습니다. 이 값은 사용자가 상대방과 직접 비교할 수 있는 식별 정보이며, 인증기관 기반 인증을 제공하지는 않습니다.
+
 자세한 구조와 보안 한계는 아래 문서 구성에서 이어서 확인할 수 있습니다.
 
 ## 문서 구성
@@ -200,6 +202,7 @@ secure-socket-chat/
 | 귓속말 | 접속자 목록에서 대상 선택 후 메시지 전송 |
 | 명령어 귓속말 | `/w 사용자명 메시지` 입력 |
 | E2E whisper | `/e2e 사용자명 메시지` 입력 또는 대상 선택 후 `E2E 전송` 버튼 클릭 |
+| E2E fingerprint 확인 | `/fingerprint 사용자명` 입력 또는 대상 선택 후 `E2E FP 확인` 버튼 클릭 |
 | 이미지 전송 | 대상 선택 후 `이미지` 버튼 클릭 |
 | 파일 전송 | 대상 선택 후 `파일` 버튼 클릭 |
 | 보안 세션 확인 | `/security` 또는 `보안정보` 버튼 |
@@ -287,6 +290,7 @@ Python socket 기반 채팅 프로그램에 공개키 교환 방식을 적용해
 
 - GUI 좌측 Security Dashboard에서 연결/암호화 상태, session id, client/server fingerprint, TOFU 신뢰 상태, sequence/replay 상태 확인
 - Security Dashboard에서 E2E 사용 가능 여부, 내 E2E fingerprint, 선택 대상 E2E fingerprint, 마지막 E2E 복호화 결과 확인
+- `/fingerprint bob` 또는 `E2E FP 확인` 버튼으로 상대방의 현재 세션 E2E fingerprint 확인
 - GUI Packet Inspector에서 암호화 전 logical packet과 암호화 후 transport packet 차이 확인
 - `/e2e bob hello`로 실험적 1:1 E2E whisper 전송 및 수신자 측 복호화 확인
 - Packet Inspector는 메시지 전문, 이미지/file binary, 전체 암호문을 표시하지 않고 제한된 preview만 표시

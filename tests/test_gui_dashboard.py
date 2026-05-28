@@ -1,7 +1,7 @@
 from datetime import datetime
 from types import SimpleNamespace
 
-from secure_chat.gui import build_security_dashboard_state, compact_fingerprint
+from secure_chat.gui import build_security_dashboard_state, compact_fingerprint, format_e2e_fingerprint_message
 from secure_chat.security import ChannelMetadata
 
 
@@ -83,3 +83,15 @@ def test_security_dashboard_state_uses_client_metadata_and_counters():
     assert state.last_e2e_decrypt_result == "OK"
     assert state.last_file_integrity == "OK"
     assert state.last_received_message_type == "image"
+
+
+def test_format_e2e_fingerprint_message_shows_full_fingerprint_and_limit_notice():
+    fingerprint = "AA:BB:CC:DD:EE:FF:00:11"
+
+    message = format_e2e_fingerprint_message("bob", fingerprint)
+
+    assert "[E2E Fingerprint]" in message
+    assert "사용자: bob" in message
+    assert f"fingerprint: {fingerprint}" in message
+    assert "현재 세션 E2E 공개키 fingerprint" in message
+    assert "인증기관 기반 인증을 제공하지는 않습니다" in message

@@ -201,7 +201,10 @@ class ChatClient:
 
         recipient_metadata = self.e2e_key_cache.get(normalized_target)
         if not recipient_metadata or not recipient_metadata.get("public_key"):
-            raise ValueError(f"{normalized_target} 사용자의 E2E 공개키를 찾을 수 없습니다.")
+            raise ValueError(
+                f"{normalized_target} 사용자의 E2E 공개키를 찾을 수 없습니다. "
+                f"/fingerprint {normalized_target}로 fingerprint 상태를 확인하세요."
+            )
 
         inner_payload = build_inner_payload(self.username, normalized_target, message)
         ciphertext = encrypt_inner_payload(
