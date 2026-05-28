@@ -101,7 +101,7 @@ python run_client.py
 - 공개키 fingerprint를 통한 세션 식별
 - 이미지 payload SHA-256 검증을 통한 전송 무결성 확인
 
-자세한 내용은 `docs/security-notes.md`를 참고하세요.
+자세한 보안 메모는 `docs/security-notes.md`, 위협 모델 관점의 정리는 `docs/threat-model.md`를 참고하세요.
 
 ## 프로젝트 구조
 
@@ -130,7 +130,8 @@ secure-socket-chat/
 ├─ docs/
 │  ├─ architecture.md
 │  ├─ protocol.md
-│  └─ security-notes.md
+│  ├─ security-notes.md
+│  └─ threat-model.md
 └─ assets/
    ├─ demo/
    └─ screenshots/
