@@ -8,27 +8,40 @@ import socket
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from secure_chat.config import DEFAULT_HOST, DEFAULT_PORT, MAX_PAYLOAD_SIZE
 from secure_chat.crypto_channel import PacketSequenceError, ReplayAttackError, SecureChannel, create_client_channel
 from secure_chat.packet_inspector import PacketInspectionEvent
 from secure_chat.security import ChannelMetadata, sha256_hex
+from secure_chat.trust_store import TrustCheckResult, check_server_fingerprint, trust_server_fingerprint
 
 logger = logging.getLogger(__name__)
+
+
+class ServerTrustError(RuntimeError):
+    """Raised when TOFU server fingerprint verification blocks a connection."""
 
 
 class ChatClient:
     """Encrypted chat client connection."""
 
-    def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, username: str = "") -> None:
+    def __init__(
+        self,
+        host: str = DEFAULT_HOST,
+        port: int = DEFAULT_PORT,
+        username: str = "",
+        trust_store_path: str | Path | None = None,
+    ) -> None:
         self.host = host
         self.port = port
         self.username = username.strip()
+        self.trust_store_path = trust_store_path
         self.inbox: queue.Queue[tuple[dict[str, Any], bytes]] = queue.Queue()
         self.packet_events: queue.Queue[PacketInspectionEvent] = queue.Queue()
         self._sock: socket.socket | None = None
         self._channel: SecureChannel | None = None
+        self._trust_check_result: TrustCheckResult | None = None
         self._running = threading.Event()
         self._receiver_thread: threading.Thread | None = None
         self.connected_at: datetime | None = None
@@ -45,6 +58,22 @@ class ChatClient:
         if self._channel is None:
             return None
         return self._channel.metadata
+
+    @property
+    def trust_check_result(self) -> TrustCheckResult | None:
+        return self._trust_check_result
+
+    @property
+    def server_trust_status(self) -> str:
+        if self._trust_check_result is None:
+            return "Unknown"
+        return self._trust_check_result.status
+
+    @property
+    def tofu_verification(self) -> str:
+        if self._trust_check_result is None:
+            return "Unknown"
+        return self._trust_check_result.verification
 
     @property
     def sent_packet_count(self) -> int:
@@ -94,10 +123,12 @@ class ChatClient:
             f"send_sequence={self.send_sequence} | "
             f"receive_sequence={self.receive_sequence} | "
             f"replay={self.last_replay_status} | "
+            f"server_trust={self.server_trust_status} | "
+            f"tofu={self.tofu_verification} | "
             f"last_received={self._last_received_message_type}"
         )
 
-    def connect(self) -> None:
+    def connect(self, trust_decider: Callable[[TrustCheckResult], bool] | None = None) -> None:
         if not self.username:
             raise ValueError("username is required")
 
@@ -107,6 +138,7 @@ class ChatClient:
         self._received_packet_count = 0
         self._last_received_message_type = "-"
         self._channel = create_client_channel(self._sock, inspection_callback=self.packet_events.put)
+        self._verify_server_trust(trust_decider)
         self.connected_at = datetime.now()
         self._send({"type": "join", "username": self.username})
 
@@ -163,6 +195,81 @@ class ChatClient:
             raise OSError("not connected")
         self._channel.send(header, payload)
         self._sent_packet_count += 1
+
+    def _verify_server_trust(self, trust_decider: Callable[[TrustCheckResult], bool] | None) -> None:
+        metadata = self.security_metadata
+        if metadata is None:
+            raise ServerTrustError("서버 fingerprint를 확인할 수 없습니다.")
+
+        result = check_server_fingerprint(
+            self.host,
+            self.port,
+            metadata.peer_fingerprint,
+            path=self.trust_store_path,
+        )
+
+        if result.status == "Changed":
+            accepted = bool(trust_decider(result)) if trust_decider is not None else False
+            if not accepted:
+                self._trust_check_result = result
+                self.close()
+                raise ServerTrustError("서버 fingerprint 변경이 감지되어 연결을 중단했습니다.")
+
+            stored = trust_server_fingerprint(
+                self.host,
+                self.port,
+                metadata.peer_fingerprint,
+                path=self.trust_store_path,
+            )
+            self._trust_check_result = TrustCheckResult(
+                host=result.host,
+                port=result.port,
+                server_id=result.server_id,
+                fingerprint=result.fingerprint,
+                status="Changed",
+                verification="Warning",
+                stored_fingerprint=stored.stored_fingerprint,
+                first_seen=stored.first_seen,
+                last_seen=stored.last_seen,
+                trust_mode=stored.trust_mode,
+                accepted=True,
+                message="server fingerprint changed and was accepted",
+            )
+            return
+
+        if result.status == "New":
+            stored = trust_server_fingerprint(
+                self.host,
+                self.port,
+                metadata.peer_fingerprint,
+                path=self.trust_store_path,
+            )
+            self._trust_check_result = TrustCheckResult(
+                host=result.host,
+                port=result.port,
+                server_id=result.server_id,
+                fingerprint=result.fingerprint,
+                status="New",
+                verification="Not registered",
+                stored_fingerprint=stored.stored_fingerprint,
+                first_seen=stored.first_seen,
+                last_seen=stored.last_seen,
+                trust_mode=stored.trust_mode,
+                accepted=True,
+                message="new server fingerprint stored",
+            )
+            return
+
+        if result.status == "Trusted":
+            self._trust_check_result = trust_server_fingerprint(
+                self.host,
+                self.port,
+                metadata.peer_fingerprint,
+                path=self.trust_store_path,
+            )
+            return
+
+        self._trust_check_result = result
 
     def _receive_loop(self) -> None:
         while self._running.is_set() and self._channel is not None:

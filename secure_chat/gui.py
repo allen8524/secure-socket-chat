@@ -10,7 +10,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog
 from typing import Any
 
-from secure_chat.client import ChatClient
+from secure_chat.client import ChatClient, ServerTrustError
 from secure_chat.config import DEFAULT_RECEIVE_DIR
 from secure_chat.packet_inspector import PacketInspectionEvent, format_packet_inspection_event
 from secure_chat.security import sha256_hex
@@ -32,6 +32,8 @@ class SecurityDashboardState:
     send_sequence: int = 0
     receive_sequence: int = 0
     last_replay_status: str = "Not checked"
+    server_trust_status: str = "Unknown"
+    tofu_verification: str = "Unknown"
     last_image_integrity: str = "N/A"
     last_received_message_type: str = "-"
 
@@ -80,6 +82,8 @@ def build_security_dashboard_state(
         send_sequence=int(getattr(client, "send_sequence", 0)),
         receive_sequence=int(getattr(client, "receive_sequence", 0)),
         last_replay_status=str(getattr(client, "last_replay_status", "Not checked") or "Not checked"),
+        server_trust_status=str(getattr(client, "server_trust_status", "Unknown") or "Unknown"),
+        tofu_verification=str(getattr(client, "tofu_verification", "Unknown") or "Unknown"),
         last_image_integrity=last_image_integrity,
         last_received_message_type=str(getattr(client, "last_received_message_type", "-") or "-"),
     )
@@ -163,6 +167,8 @@ class ChatApp:
             ("send_sequence", "송신 sequence"),
             ("receive_sequence", "수신 sequence"),
             ("replay_status", "Replay 검증"),
+            ("server_trust", "서버 신뢰 상태"),
+            ("tofu_result", "TOFU 검증"),
             ("image_integrity", "이미지 무결성"),
             ("last_type", "마지막 수신 유형"),
         ]
@@ -241,16 +247,45 @@ class ChatApp:
 
         self.client = ChatClient(self.host, self.port, self.username)
         try:
-            self.client.connect()
+            self.client.connect(trust_decider=self._confirm_changed_server_fingerprint)
             self.status_text.set(f"Connected: {self.username} @ {self.host}:{self.port}")
+            self._add_tofu_status_line()
             return True
         except OSError as exc:
             messagebox.showerror("접속 실패", f"서버에 접속할 수 없습니다.\n{exc}")
+        except ServerTrustError as exc:
+            messagebox.showwarning("서버 신뢰 검증 실패", str(exc))
         except Exception as exc:
             messagebox.showerror("접속 실패", f"암호화 연결을 만들 수 없습니다.\n{exc}")
 
         self.win.destroy()
         return False
+
+    def _confirm_changed_server_fingerprint(self, result: Any) -> bool:
+        message = (
+            "이전에 저장된 서버 fingerprint와 현재 fingerprint가 다릅니다.\n\n"
+            "서버가 변경되었거나 중간자 공격 가능성이 있습니다.\n\n"
+            f"서버: {result.server_id}\n"
+            f"저장된 fingerprint: {result.stored_fingerprint or '-'}\n"
+            f"현재 fingerprint: {result.fingerprint}\n\n"
+            "예를 선택하면 변경된 fingerprint를 신뢰하고 계속합니다.\n"
+            "아니오를 선택하면 연결을 중단합니다."
+        )
+        return messagebox.askyesno("서버 fingerprint 변경 경고", message, parent=self.win)
+
+    def _add_tofu_status_line(self) -> None:
+        if self.client is None or self.client.trust_check_result is None:
+            return
+
+        result = self.client.trust_check_result
+        if result.status == "New":
+            self._add_chat_line("[보안] TOFU: 최초 접속 서버 fingerprint를 로컬 신뢰 저장소에 등록했습니다.")
+        elif result.status == "Trusted":
+            self._add_chat_line("[보안] TOFU: 저장된 서버 fingerprint와 일치합니다.")
+        elif result.status == "Changed" and result.accepted:
+            self._add_chat_line("[보안 경고] TOFU: 변경된 서버 fingerprint를 사용자가 신뢰하여 갱신했습니다.")
+        elif result.status == "Changed":
+            self._add_chat_line("[보안 경고] TOFU: 서버 fingerprint 변경이 감지되었습니다.")
 
     def _selected_target(self) -> str:
         selection = self.user_list.curselection()
@@ -481,6 +516,8 @@ class ChatApp:
             "send_sequence": str(state.send_sequence),
             "receive_sequence": str(state.receive_sequence),
             "replay_status": state.last_replay_status,
+            "server_trust": state.server_trust_status,
+            "tofu_result": state.tofu_verification,
             "image_integrity": state.last_image_integrity,
             "last_type": state.last_received_message_type,
         }

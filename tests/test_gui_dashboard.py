@@ -22,6 +22,8 @@ def test_security_dashboard_state_defaults_without_client():
     assert state.send_sequence == 0
     assert state.receive_sequence == 0
     assert state.last_replay_status == "Not checked"
+    assert state.server_trust_status == "Unknown"
+    assert state.tofu_verification == "Unknown"
 
 
 def test_security_dashboard_state_uses_client_metadata_and_counters():
@@ -42,6 +44,8 @@ def test_security_dashboard_state_uses_client_metadata_and_counters():
         send_sequence=4,
         receive_sequence=6,
         last_replay_status="OK sequence=6",
+        server_trust_status="Trusted",
+        tofu_verification="OK",
         last_received_message_type="image",
     )
 
@@ -60,5 +64,7 @@ def test_security_dashboard_state_uses_client_metadata_and_counters():
     assert state.send_sequence == 4
     assert state.receive_sequence == 6
     assert state.last_replay_status == "OK sequence=6"
+    assert state.server_trust_status == "Trusted"
+    assert state.tofu_verification == "OK"
     assert state.last_image_integrity == "OK"
     assert state.last_received_message_type == "image"
