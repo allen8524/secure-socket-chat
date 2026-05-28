@@ -1,5 +1,7 @@
 # SecureSocketChat
 
+![Python CI](https://github.com/allen8524/secure-socket-chat/actions/workflows/python-tests.yml/badge.svg)
+
 PyNaCl 기반 공개키 교환으로 클라이언트-서버 암호화 채널을 구성한 Python 보안 소켓 채팅 프로젝트입니다.
 
 SecureSocketChat은 단순 채팅 예제를 넘어, 네트워크 패킷 framing, 암호화 세션 구성, GUI 클라이언트, 파일 payload 무결성 검증, 테스트 자동화까지 직접 설계한 학습 및 포트폴리오 목적의 보안 네트워크 프로젝트입니다. 서버와 각 클라이언트는 PyNaCl `Box` 기반의 독립적인 암호화 채널을 만들고, 메시지와 이미지/일반 파일 데이터를 자체 패킷 프로토콜을 통해 주고받습니다.
@@ -38,7 +40,7 @@ CLI 데모는 로컬 서버를 thread로 시작한 뒤 `alice`, `bob` 테스트 
 | 서버 운영 정보 | 서버 uptime, 접속자 수, 메시지/이미지/파일 전송 통계 조회 |
 | GUI | Tkinter 기반 데스크톱 GUI 클라이언트와 접속자 목록 실시간 동기화 |
 | 방어 로직 | TOFU 기반 서버 fingerprint 검증, sequence number 기반 replay 방어, payload/header 크기 제한 |
-| 테스트/CI | pytest 기반 테스트와 GitHub Actions 기반 테스트 구조 |
+| 테스트/CI | pytest, pytest-cov, ruff, bandit, GitHub Actions 기반 자동 검증 구조 |
 
 ## 기술 스택
 
@@ -49,7 +51,8 @@ CLI 데모는 로컬 서버를 thread로 시작한 뒤 `alice`, `bob` 테스트 
 | Encryption | PyNaCl PublicKey, PrivateKey, Box |
 | Protocol | Length-prefix framing, JSON header, binary payload |
 | GUI | Tkinter |
-| Test | pytest |
+| Test | pytest, pytest-cov |
+| Quality | ruff, bandit |
 | CI | GitHub Actions |
 
 ## 빠른 실행 방법
@@ -124,6 +127,7 @@ secure-socket-chat/
 ├─ README.md
 ├─ LICENSE
 ├─ requirements.txt
+├─ requirements-dev.txt
 ├─ pyproject.toml
 ├─ run_server.py
 ├─ run_client.py
@@ -154,7 +158,10 @@ secure-socket-chat/
 │  └─ test_utils.py
 ├─ docs/
 │  ├─ architecture.md
+│  ├─ ci.md
+│  ├─ demo.md
 │  ├─ protocol.md
+│  ├─ testing.md
 │  ├─ security-notes.md
 │  └─ threat-model.md
 └─ assets/
@@ -182,6 +189,7 @@ secure-socket-chat/
 
 ```bash
 pip install -r requirements.txt
+pip install -r requirements-dev.txt
 pytest -q
 ```
 
@@ -202,6 +210,27 @@ pytest -q
 - SHA-256 해시 검증
 
 자동 테스트는 GUI를 띄우지 않고 headless 네트워크 클라이언트를 사용합니다. Tkinter GUI 화면, 버튼 배치, 실제 파일 선택 대화상자는 수동 확인 대상입니다.
+
+## Quality Checks
+
+이 프로젝트는 GitHub Actions의 `Python CI` workflow에서 Python 3.10, 3.11, 3.12를 대상으로 다음 검증을 자동으로 수행합니다.
+
+- pytest 기반 단위/통합 테스트
+- pytest-cov 기반 coverage 측정
+- ruff 기반 코드 스타일 검사
+- bandit 기반 Python 보안 스캔
+
+로컬에서 CI와 같은 품질 검사를 실행하려면 개발 의존성을 설치한 뒤 아래 명령어를 사용합니다.
+
+```bash
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+ruff check .
+pytest --cov=secure_chat --cov-report=term-missing
+bandit -r secure_chat
+```
+
+운영 실행 의존성은 `requirements.txt`에, 테스트와 품질 검사 도구는 `requirements-dev.txt`에 분리했습니다. 자세한 CI 구성은 `docs/ci.md`, 테스트 구조는 `docs/testing.md`를 참고하세요.
 
 ## 아키텍처
 

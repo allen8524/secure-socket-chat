@@ -4,10 +4,25 @@
 
 ```bash
 pip install -r requirements.txt
+pip install -r requirements-dev.txt
 pytest -q
 ```
 
 모든 테스트는 GUI 창을 띄우지 않고 실행됩니다. Tkinter 화면 구성과 실제 파일 선택 대화상자는 수동 확인 대상입니다.
+
+coverage를 포함해 실행하려면 다음 명령어를 사용합니다.
+
+```bash
+pytest --cov=secure_chat --cov-report=term-missing
+```
+
+로컬에서 CI와 같은 품질 검사를 확인하려면 아래 명령어를 순서대로 실행합니다.
+
+```bash
+ruff check .
+pytest --cov=secure_chat --cov-report=term-missing
+bandit -r secure_chat
+```
 
 ## 테스트 구조
 
@@ -37,3 +52,7 @@ pytest -q
 - `python run_client.py --name bob`
 - GUI 파일 선택 대화상자와 위험 확장자 경고창
 - Security Dashboard와 Packet Inspector의 실제 화면 배치
+
+## CI 연동
+
+GitHub Actions의 `Python CI` workflow는 Python 3.10, 3.11, 3.12에서 `ruff check .`, coverage 포함 pytest, `bandit -r secure_chat`을 실행합니다. GUI 창을 띄우는 수동 시나리오는 CI에 포함하지 않습니다.
