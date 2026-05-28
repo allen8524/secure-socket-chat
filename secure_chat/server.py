@@ -9,7 +9,7 @@ import time
 from typing import Iterable
 
 from secure_chat.config import DEFAULT_HOST, DEFAULT_PORT, SOCKET_TIMEOUT_SECONDS
-from secure_chat.crypto_channel import SecureChannel, create_server_channel
+from secure_chat.crypto_channel import PacketSequenceError, ReplayAttackError, SecureChannel, create_server_channel
 from secure_chat.protocol import ProtocolError
 from secure_chat.utils import safe_filename
 
@@ -181,6 +181,14 @@ class ChatServer:
 
         except (ConnectionResetError, ConnectionAbortedError, OSError):
             logger.info("connection closed by peer: %s", addr)
+        except ReplayAttackError as exc:
+            logger.warning("replay suspected from %s: %s", addr, exc)
+            if channel is not None:
+                self._safe_send(channel, {"type": "error", "text": "replay 의심 패킷이 차단되었습니다."})
+        except PacketSequenceError as exc:
+            logger.warning("invalid sequence from %s: %s", addr, exc)
+            if channel is not None:
+                self._safe_send(channel, {"type": "error", "text": "비정상 sequence 패킷이 차단되었습니다."})
         except ProtocolError as exc:
             logger.warning("protocol error from %s: %s", addr, exc)
             if channel is not None:

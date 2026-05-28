@@ -19,6 +19,9 @@ def test_security_dashboard_state_defaults_without_client():
     assert state.session_id == "-"
     assert state.sent_packet_count == 0
     assert state.received_packet_count == 0
+    assert state.send_sequence == 0
+    assert state.receive_sequence == 0
+    assert state.last_replay_status == "Not checked"
 
 
 def test_security_dashboard_state_uses_client_metadata_and_counters():
@@ -36,6 +39,9 @@ def test_security_dashboard_state_uses_client_metadata_and_counters():
         connected_at=datetime(2026, 5, 28, 10, 30, 0),
         sent_packet_count=3,
         received_packet_count=5,
+        send_sequence=4,
+        receive_sequence=6,
+        last_replay_status="OK sequence=6",
         last_received_message_type="image",
     )
 
@@ -51,5 +57,8 @@ def test_security_dashboard_state_uses_client_metadata_and_counters():
     assert state.session_started_at == "2026-05-28 10:30:00"
     assert state.sent_packet_count == 3
     assert state.received_packet_count == 5
+    assert state.send_sequence == 4
+    assert state.receive_sequence == 6
+    assert state.last_replay_status == "OK sequence=6"
     assert state.last_image_integrity == "OK"
     assert state.last_received_message_type == "image"

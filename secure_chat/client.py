@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from secure_chat.config import DEFAULT_HOST, DEFAULT_PORT, MAX_PAYLOAD_SIZE
-from secure_chat.crypto_channel import SecureChannel, create_client_channel
+from secure_chat.crypto_channel import PacketSequenceError, ReplayAttackError, SecureChannel, create_client_channel
 from secure_chat.packet_inspector import PacketInspectionEvent
 from secure_chat.security import ChannelMetadata, sha256_hex
 
@@ -58,6 +58,24 @@ class ChatClient:
     def last_received_message_type(self) -> str:
         return self._last_received_message_type
 
+    @property
+    def send_sequence(self) -> int:
+        if self._channel is None:
+            return 0
+        return self._channel.send_sequence
+
+    @property
+    def receive_sequence(self) -> int:
+        if self._channel is None:
+            return 0
+        return self._channel.receive_sequence
+
+    @property
+    def last_replay_status(self) -> str:
+        if self._channel is None:
+            return "Not checked"
+        return self._channel.last_replay_status
+
     def security_report(self) -> str:
         metadata = self.security_metadata
         if metadata is None:
@@ -73,6 +91,9 @@ class ChatClient:
             f"server_fp={metadata.peer_fingerprint} | "
             f"sent_packets={self._sent_packet_count} | "
             f"received_packets={self._received_packet_count} | "
+            f"send_sequence={self.send_sequence} | "
+            f"receive_sequence={self.receive_sequence} | "
+            f"replay={self.last_replay_status} | "
             f"last_received={self._last_received_message_type}"
         )
 
@@ -153,6 +174,12 @@ class ChatClient:
                 self._received_packet_count += 1
                 self._last_received_message_type = str(header.get("type", "unknown"))
                 self.inbox.put((header, payload))
+            except ReplayAttackError:
+                self.inbox.put(({"type": "security_warning", "text": "replay 의심 패킷 차단"}, b""))
+                continue
+            except PacketSequenceError:
+                self.inbox.put(({"type": "security_warning", "text": "비정상 sequence 패킷 차단"}, b""))
+                continue
             except OSError:
                 break
             except Exception as exc:

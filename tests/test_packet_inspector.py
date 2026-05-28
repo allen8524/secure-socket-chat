@@ -44,15 +44,18 @@ def test_ciphertext_preview_is_base64_and_truncated():
 def test_packet_inspection_event_formats_safe_fields():
     event = build_packet_inspection_event(
         direction="OUTBOUND",
-        header={"type": "whisper", "to": "bob", "text": "secret message body that should be shortened"},
+        header={"type": "whisper", "to": "bob", "text": "secret message body that should be shortened", "sequence": 7},
         payload=b"",
         encrypted_packet=b"ciphertext" * 20,
         decrypt_success=None,
+        replay_status="N/A",
     )
 
     rendered = format_packet_inspection_event(event)
 
     assert "OUTBOUND whisper" in rendered
+    assert "sequence: 7" in rendered
+    assert "replay: N/A" in rendered
     assert "payload size: 0 bytes" in rendered
     assert "encrypted packet size:" in rendered
     assert "decrypt: N/A" in rendered

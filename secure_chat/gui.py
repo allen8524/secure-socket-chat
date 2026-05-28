@@ -29,6 +29,9 @@ class SecurityDashboardState:
     session_started_at: str = "-"
     sent_packet_count: int = 0
     received_packet_count: int = 0
+    send_sequence: int = 0
+    receive_sequence: int = 0
+    last_replay_status: str = "Not checked"
     last_image_integrity: str = "N/A"
     last_received_message_type: str = "-"
 
@@ -74,6 +77,9 @@ def build_security_dashboard_state(
         session_started_at=_format_datetime(getattr(client, "connected_at", None)),
         sent_packet_count=int(getattr(client, "sent_packet_count", 0)),
         received_packet_count=int(getattr(client, "received_packet_count", 0)),
+        send_sequence=int(getattr(client, "send_sequence", 0)),
+        receive_sequence=int(getattr(client, "receive_sequence", 0)),
+        last_replay_status=str(getattr(client, "last_replay_status", "Not checked") or "Not checked"),
         last_image_integrity=last_image_integrity,
         last_received_message_type=str(getattr(client, "last_received_message_type", "-") or "-"),
     )
@@ -154,6 +160,9 @@ class ChatApp:
             ("started_at", "세션 시작"),
             ("sent_packets", "송신 패킷"),
             ("received_packets", "수신 패킷"),
+            ("send_sequence", "송신 sequence"),
+            ("receive_sequence", "수신 sequence"),
+            ("replay_status", "Replay 검증"),
             ("image_integrity", "이미지 무결성"),
             ("last_type", "마지막 수신 유형"),
         ]
@@ -291,6 +300,8 @@ class ChatApp:
                 self._add_chat_line(f"[알림] {header.get('text', '')}")
             elif msg_type == "error":
                 self._add_chat_line(f"[오류] {header.get('text', '')}")
+            elif msg_type == "security_warning":
+                self._add_chat_line(f"[보안 경고] {header.get('text', '')}")
             elif msg_type == "chat":
                 self._add_chat_line(f"[전체] {header.get('from', '')}: {header.get('text', '')}")
             elif msg_type == "whisper":
@@ -467,6 +478,9 @@ class ChatApp:
             "started_at": state.session_started_at,
             "sent_packets": str(state.sent_packet_count),
             "received_packets": str(state.received_packet_count),
+            "send_sequence": str(state.send_sequence),
+            "receive_sequence": str(state.receive_sequence),
+            "replay_status": state.last_replay_status,
             "image_integrity": state.last_image_integrity,
             "last_type": state.last_received_message_type,
         }

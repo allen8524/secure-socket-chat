@@ -26,7 +26,7 @@ SecureSocketChat은 단순 채팅 예제를 넘어, 네트워크 패킷 framing,
 | 패킷 관찰 | Packet Inspector에서 암호화 전 논리 패킷과 암호화 후 전송 패킷의 요약 비교 |
 | 서버 운영 정보 | 서버 uptime, 접속자 수, 메시지/이미지 전송 통계 조회 |
 | GUI | Tkinter 기반 데스크톱 GUI 클라이언트와 접속자 목록 실시간 동기화 |
-| 방어 로직 | payload 크기 제한, header 크기 제한, 수신 파일명 정규화 |
+| 방어 로직 | payload/header 크기 제한, sequence number 기반 replay 방어, 수신 파일명 정규화 |
 | 테스트/CI | pytest 기반 테스트와 GitHub Actions 기반 테스트 구조 |
 
 ## 기술 스택
@@ -98,6 +98,7 @@ python run_client.py
 - 공개키 기반 세션별 키 교환 흐름 구현
 - 바이너리 payload를 포함하는 자체 패킷 framing 구현
 - 비정상 header/payload 방어
+- sequence number 기반 replay 의심 패킷 차단
 - 파일명 경로 조작 가능성 축소
 - 공개키 fingerprint를 통한 세션 식별
 - 이미지 payload SHA-256 검증을 통한 전송 무결성 확인
@@ -207,7 +208,7 @@ Python socket 기반 채팅 프로그램에 공개키 교환 방식을 적용해
 
 ## 시연 포인트
 
-- GUI 좌측 Security Dashboard에서 연결/암호화 상태, session id, client/server fingerprint, 송수신 패킷 수 확인
+- GUI 좌측 Security Dashboard에서 연결/암호화 상태, session id, client/server fingerprint, sequence/replay 상태 확인
 - GUI Packet Inspector에서 암호화 전 logical packet과 암호화 후 transport packet 차이 확인
 - Packet Inspector는 메시지 전문, 이미지 binary, 전체 암호문을 표시하지 않고 제한된 preview만 표시
 - `/security` 명령어로 현재 암호화 세션 정보 출력

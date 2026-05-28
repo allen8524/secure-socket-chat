@@ -30,6 +30,14 @@ class KeyExchangeError(RuntimeError):
     """Raised when the public-key exchange handshake fails."""
 
 
+class PacketSequenceError(ProtocolError):
+    """Raised when an encrypted logical packet has an invalid sequence."""
+
+
+class ReplayAttackError(PacketSequenceError):
+    """Raised when a repeated or stale sequence number is received."""
+
+
 class SecureChannel:
     """Thread-safe encrypted wrapper around a socket."""
 
@@ -47,24 +55,42 @@ class SecureChannel:
         self.metadata = metadata
         self._inspection_callback = inspection_callback
         self._send_lock = threading.Lock()
+        self._send_sequence = 0
+        self._receive_sequence = 0
+        self._last_replay_status = "Not checked"
+
+    @property
+    def send_sequence(self) -> int:
+        return self._send_sequence
+
+    @property
+    def receive_sequence(self) -> int:
+        return self._receive_sequence
+
+    @property
+    def last_replay_status(self) -> str:
+        return self._last_replay_status
 
     def send(self, header: dict[str, Any], payload: bytes = b"") -> None:
-        plain_packet = pack_logical_packet(header, payload)
-        encrypted_packet = bytes(self._box.encrypt(plain_packet))
-
         with self._send_lock:
+            self._send_sequence += 1
+            sequenced_header = dict(header)
+            sequenced_header["sequence"] = self._send_sequence
+            plain_packet = pack_logical_packet(sequenced_header, payload)
+            encrypted_packet = bytes(self._box.encrypt(plain_packet))
             raw_send_packet(self._sock, {"type": "secure"}, encrypted_packet)
 
         self._emit_inspection_event(
             build_packet_inspection_event(
                 direction="OUTBOUND",
-                header=header,
+                header=sequenced_header,
                 payload=payload,
                 encrypted_packet=encrypted_packet,
                 decrypt_success=None,
+                replay_status="N/A",
             )
         )
-        logger.debug("encrypted packet sent to %s: %s", self._peer_label, packet_summary(header, payload))
+        logger.debug("encrypted packet sent to %s: %s", self._peer_label, packet_summary(sequenced_header, payload))
         logger.debug("ciphertext preview: %s", preview_bytes(encrypted_packet))
 
     def recv(self) -> tuple[dict[str, Any], bytes] | tuple[None, None]:
@@ -124,6 +150,25 @@ class SecureChannel:
             )
             raise
 
+        try:
+            replay_status = self._validate_sequence(packet.header)
+        except PacketSequenceError as exc:
+            status = self._last_replay_status
+            self._emit_inspection_event(
+                build_packet_inspection_event(
+                    direction="INBOUND",
+                    header=packet.header,
+                    payload=packet.payload,
+                    encrypted_packet=encrypted_packet,
+                    decrypt_success=True,
+                    replay_status=status,
+                    blocked=True,
+                    error_message=str(exc),
+                )
+            )
+            logger.warning("blocked suspicious packet from %s: %s", self._peer_label, exc)
+            raise
+
         self._emit_inspection_event(
             build_packet_inspection_event(
                 direction="INBOUND",
@@ -131,10 +176,29 @@ class SecureChannel:
                 payload=packet.payload,
                 encrypted_packet=encrypted_packet,
                 decrypt_success=True,
+                replay_status=replay_status,
             )
         )
         logger.debug("encrypted packet received from %s: %s", self._peer_label, packet_summary(packet.header, packet.payload))
         return packet.header, packet.payload
+
+    def _validate_sequence(self, header: dict[str, Any]) -> str:
+        sequence = header.get("sequence")
+        if isinstance(sequence, bool) or not isinstance(sequence, int):
+            self._last_replay_status = "Invalid sequence"
+            raise PacketSequenceError("invalid packet sequence")
+
+        if sequence <= 0:
+            self._last_replay_status = f"Invalid sequence={sequence}"
+            raise PacketSequenceError("invalid packet sequence")
+
+        if sequence <= self._receive_sequence:
+            self._last_replay_status = f"Replay blocked sequence={sequence} last={self._receive_sequence}"
+            raise ReplayAttackError(f"replay suspected: sequence {sequence} <= last {self._receive_sequence}")
+
+        self._receive_sequence = sequence
+        self._last_replay_status = f"OK sequence={sequence}"
+        return self._last_replay_status
 
     def _emit_inspection_event(self, event: PacketInspectionEvent) -> None:
         if self._inspection_callback is None:
