@@ -118,7 +118,20 @@ python run_client.py
 - 공개키 fingerprint를 통한 세션 식별
 - 이미지/파일 payload SHA-256 검증을 통한 전송 무결성 확인
 
-자세한 보안 메모는 `docs/security-notes.md`, 위협 모델 관점의 정리는 `docs/threat-model.md`를 참고하세요.
+자세한 구조와 보안 한계는 아래 문서 구성에서 이어서 확인할 수 있습니다.
+
+## 문서 구성
+
+| 문서 | 설명 |
+|---|---|
+| [Architecture](docs/architecture.md) | 전체 시스템 구조, 키 교환, 메시지 전송, 파일 전송 흐름을 Mermaid 다이어그램으로 설명 |
+| [Protocol](docs/protocol.md) | 4-byte length prefix, JSON header, binary payload, secure packet 규칙 정리 |
+| [Security Notes](docs/security-notes.md) | 적용한 보안 요소와 클라이언트-서버 암호화 채널의 한계 설명 |
+| [Threat Model](docs/threat-model.md) | 보호 대상, 신뢰 경계, 공격 시나리오와 현재 대응 방식 정리 |
+| [Testing](docs/testing.md) | 단위/통합 테스트 실행 방법과 검증 범위 정리 |
+| [CI](docs/ci.md) | GitHub Actions, ruff, coverage, bandit 검증 흐름 정리 |
+| [Demo](docs/demo.md) | `demo.py` 기반 CLI 자동 시연 흐름 설명 |
+| [Feature Pack](docs/feature-pack.md) | 포트폴리오 시연에서 강조할 부가 기능 요약 |
 
 ## 프로젝트 구조
 
@@ -160,6 +173,7 @@ secure-socket-chat/
 │  ├─ architecture.md
 │  ├─ ci.md
 │  ├─ demo.md
+│  ├─ feature-pack.md
 │  ├─ protocol.md
 │  ├─ testing.md
 │  ├─ security-notes.md
@@ -234,23 +248,9 @@ bandit -r secure_chat
 
 ## 아키텍처
 
-```txt
-Client A
-  └─ SecureChannel
-       └─ encrypted packet
-            ↓
-          Server
-            ↓
-       ┌───────────────┐
-       │ route message │
-       └───────────────┘
-            ↓
-       encrypted packet
-  └─ SecureChannel
-Client B
-```
-
 서버는 각 클라이언트와 독립적인 암호화 채널을 생성합니다. 클라이언트가 보낸 메시지는 서버에서 복호화된 뒤, 수신 대상 클라이언트의 암호화 채널을 통해 재전송됩니다.
+
+전체 구조, 키 교환 sequence, 메시지 라우팅, 파일 전송 및 SHA-256 검증 흐름은 [Architecture](docs/architecture.md)에 Mermaid 다이어그램으로 정리했습니다.
 
 ## 구현 근거
 
