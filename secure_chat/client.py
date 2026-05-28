@@ -6,6 +6,7 @@ import logging
 import queue
 import socket
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,10 @@ class ChatClient:
         self._channel: SecureChannel | None = None
         self._running = threading.Event()
         self._receiver_thread: threading.Thread | None = None
+        self.connected_at: datetime | None = None
+        self._sent_packet_count = 0
+        self._received_packet_count = 0
+        self._last_received_message_type = "-"
 
     @property
     def connected(self) -> bool:
@@ -39,15 +44,34 @@ class ChatClient:
             return None
         return self._channel.metadata
 
+    @property
+    def sent_packet_count(self) -> int:
+        return self._sent_packet_count
+
+    @property
+    def received_packet_count(self) -> int:
+        return self._received_packet_count
+
+    @property
+    def last_received_message_type(self) -> str:
+        return self._last_received_message_type
+
     def security_report(self) -> str:
         metadata = self.security_metadata
         if metadata is None:
             return "보안 세션 정보가 없습니다."
+        connection_state = "Connected" if self.connected else "Disconnected"
+        encryption_state = "Active" if self.connected else "Inactive"
         return (
+            f"connection={connection_state} | "
+            f"encryption={encryption_state} | "
             f"cipher={metadata.cipher} | "
             f"session={metadata.session_id} | "
             f"client_fp={metadata.local_fingerprint} | "
-            f"server_fp={metadata.peer_fingerprint}"
+            f"server_fp={metadata.peer_fingerprint} | "
+            f"sent_packets={self._sent_packet_count} | "
+            f"received_packets={self._received_packet_count} | "
+            f"last_received={self._last_received_message_type}"
         )
 
     def connect(self) -> None:
@@ -56,8 +80,12 @@ class ChatClient:
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.connect((self.host, self.port))
+        self._sent_packet_count = 0
+        self._received_packet_count = 0
+        self._last_received_message_type = "-"
         self._channel = create_client_channel(self._sock)
-        self._channel.send({"type": "join", "username": self.username})
+        self.connected_at = datetime.now()
+        self._send({"type": "join", "username": self.username})
 
         self._running.set()
         self._receiver_thread = threading.Thread(target=self._receive_loop, daemon=True)
@@ -111,6 +139,7 @@ class ChatClient:
         if self._channel is None:
             raise OSError("not connected")
         self._channel.send(header, payload)
+        self._sent_packet_count += 1
 
     def _receive_loop(self) -> None:
         while self._running.is_set() and self._channel is not None:
@@ -119,6 +148,8 @@ class ChatClient:
                 if header is None:
                     self.inbox.put(({"type": "system", "text": "서버와 연결이 종료되었습니다."}, b""))
                     break
+                self._received_packet_count += 1
+                self._last_received_message_type = str(header.get("type", "unknown"))
                 self.inbox.put((header, payload))
             except OSError:
                 break

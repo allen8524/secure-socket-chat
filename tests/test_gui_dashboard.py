@@ -1,0 +1,55 @@
+from datetime import datetime
+from types import SimpleNamespace
+
+from secure_chat.gui import build_security_dashboard_state, compact_fingerprint
+from secure_chat.security import ChannelMetadata
+
+
+def test_compact_fingerprint_keeps_front_and_back_groups():
+    fingerprint = "AA:BB:CC:DD:EE:FF:00:11"
+
+    assert compact_fingerprint(fingerprint) == "AA:BB:CC:...:00:11"
+
+
+def test_security_dashboard_state_defaults_without_client():
+    state = build_security_dashboard_state(None)
+
+    assert state.connection_state == "Disconnected"
+    assert state.encryption_state == "Inactive"
+    assert state.session_id == "-"
+    assert state.sent_packet_count == 0
+    assert state.received_packet_count == 0
+
+
+def test_security_dashboard_state_uses_client_metadata_and_counters():
+    metadata = ChannelMetadata(
+        cipher="PyNaCl Box (Curve25519 XSalsa20-Poly1305)",
+        local_public_key="client-key",
+        peer_public_key="server-key",
+        local_fingerprint="AA:BB:CC:DD:EE:FF:00:11",
+        peer_fingerprint="11:22:33:44:55:66:77:88",
+        session_id="ABCDEF123456",
+    )
+    client = SimpleNamespace(
+        connected=True,
+        security_metadata=metadata,
+        connected_at=datetime(2026, 5, 28, 10, 30, 0),
+        sent_packet_count=3,
+        received_packet_count=5,
+        last_received_message_type="image",
+    )
+
+    state = build_security_dashboard_state(client, last_image_integrity="OK")
+
+    assert state.connection_state == "Connected"
+    assert state.encryption_state == "Active"
+    assert state.cipher == "PyNaCl Box"
+    assert state.key_exchange == "PublicKey 기반"
+    assert state.session_id == "ABCDEF123456"
+    assert state.local_fingerprint == "AA:BB:CC:...:00:11"
+    assert state.peer_fingerprint == "11:22:33:...:77:88"
+    assert state.session_started_at == "2026-05-28 10:30:00"
+    assert state.sent_packet_count == 3
+    assert state.received_packet_count == 5
+    assert state.last_image_integrity == "OK"
+    assert state.last_received_message_type == "image"

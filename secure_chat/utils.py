@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+import posixpath
 import time
 from pathlib import Path
 
@@ -10,10 +10,10 @@ from pathlib import Path
 def safe_filename(name: str, fallback: str = "image.bin") -> str:
     """Return a filesystem-safe basename.
 
-    This intentionally strips directory components to reduce path traversal risk when
-    saving files received over the network.
+    This strips POSIX-style directory components and neutralizes remaining separators
+    to reduce path traversal risk when saving files received over the network.
     """
-    base = os.path.basename(name).strip()
+    base = posixpath.basename(name).strip()
     if not base:
         base = fallback
     return base.replace("/", "_").replace("\\", "_")

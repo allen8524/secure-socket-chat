@@ -2,15 +2,80 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 import queue
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog
+from typing import Any
 
 from secure_chat.client import ChatClient
 from secure_chat.config import DEFAULT_RECEIVE_DIR
 from secure_chat.security import sha256_hex
 from secure_chat.utils import save_received_file
+
+
+@dataclass(frozen=True)
+class SecurityDashboardState:
+    connection_state: str = "Disconnected"
+    encryption_state: str = "Inactive"
+    cipher: str = "PyNaCl Box"
+    key_exchange: str = "PublicKey 기반"
+    session_id: str = "-"
+    local_fingerprint: str = "-"
+    peer_fingerprint: str = "-"
+    session_started_at: str = "-"
+    sent_packet_count: int = 0
+    received_packet_count: int = 0
+    last_image_integrity: str = "N/A"
+    last_received_message_type: str = "-"
+
+
+def compact_fingerprint(fingerprint: str) -> str:
+    if not fingerprint or fingerprint == "-":
+        return "-"
+
+    parts = fingerprint.split(":")
+    if len(parts) <= 5:
+        return fingerprint
+    return f"{':'.join(parts[:3])}:...:{':'.join(parts[-2:])}"
+
+
+def _format_datetime(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return "-"
+
+
+def build_security_dashboard_state(
+    client: Any | None,
+    last_image_integrity: str = "N/A",
+) -> SecurityDashboardState:
+    metadata = getattr(client, "security_metadata", None) if client is not None else None
+    connected = bool(client is not None and getattr(client, "connected", False))
+    encryption_active = connected and metadata is not None
+
+    if metadata is None:
+        return SecurityDashboardState(
+            last_image_integrity=last_image_integrity,
+        )
+
+    cipher = "PyNaCl Box" if "PyNaCl Box" in metadata.cipher else metadata.cipher
+    return SecurityDashboardState(
+        connection_state="Connected" if connected else "Disconnected",
+        encryption_state="Active" if encryption_active else "Inactive",
+        cipher=cipher,
+        key_exchange="PublicKey 기반",
+        session_id=metadata.session_id,
+        local_fingerprint=compact_fingerprint(metadata.local_fingerprint),
+        peer_fingerprint=compact_fingerprint(metadata.peer_fingerprint),
+        session_started_at=_format_datetime(getattr(client, "connected_at", None)),
+        sent_packet_count=int(getattr(client, "sent_packet_count", 0)),
+        received_packet_count=int(getattr(client, "received_packet_count", 0)),
+        last_image_integrity=last_image_integrity,
+        last_received_message_type=str(getattr(client, "last_received_message_type", "-") or "-"),
+    )
 
 
 class ChatApp:
@@ -24,16 +89,19 @@ class ChatApp:
         self.client: ChatClient | None = None
         self.online_users: list[str] = []
         self.transcript_lines: list[str] = []
+        self.last_image_integrity_result = "N/A"
+        self.security_dashboard_state = SecurityDashboardState()
 
         self.win = tk.Tk()
         self.win.title("SecureSocketChat")
         self.win.geometry("860x600")
         self.win.minsize(780, 520)
 
-        self.security_text = tk.StringVar(value="보안 세션: 연결 전")
+        self.security_vars: dict[str, tk.StringVar] = {}
         self.status_text = tk.StringVar(value="Ready")
 
         self._build_layout()
+        self._refresh_security_panel()
         self.win.protocol("WM_DELETE_WINDOW", self.close)
 
     def run(self) -> None:
@@ -58,7 +126,7 @@ class ChatApp:
         user_label = tk.Label(left_frame, text="접속자 / 귓속말 대상")
         user_label.pack(anchor="w")
 
-        self.user_list = tk.Listbox(left_frame, width=24, height=18, exportselection=False)
+        self.user_list = tk.Listbox(left_frame, width=31, height=9, exportselection=False)
         self.user_list.pack(fill=tk.Y, expand=True)
         self.user_list.insert(tk.END, "전체")
         self.user_list.selection_set(0)
@@ -70,11 +138,36 @@ class ChatApp:
         )
         hint_label.pack(anchor="w", pady=(10, 0))
 
-        security_frame = tk.LabelFrame(left_frame, text="보안 세션", padx=8, pady=8)
+        security_frame = tk.LabelFrame(left_frame, text="Security Dashboard", padx=8, pady=8)
         security_frame.pack(fill=tk.X, pady=(12, 0))
 
-        security_label = tk.Label(security_frame, textvariable=self.security_text, justify=tk.LEFT, wraplength=170)
-        security_label.pack(anchor="w")
+        security_fields = [
+            ("connection", "연결 상태"),
+            ("encryption", "암호화 상태"),
+            ("cipher", "암호화 방식"),
+            ("key_exchange", "키 교환 방식"),
+            ("session_id", "세션 ID"),
+            ("local_fp", "내 공개키 FP"),
+            ("peer_fp", "서버 공개키 FP"),
+            ("started_at", "세션 시작"),
+            ("sent_packets", "송신 패킷"),
+            ("received_packets", "수신 패킷"),
+            ("image_integrity", "이미지 무결성"),
+            ("last_type", "마지막 수신 유형"),
+        ]
+
+        for row, (key, label_text) in enumerate(security_fields):
+            self.security_vars[key] = tk.StringVar(value="-")
+            tk.Label(security_frame, text=f"{label_text}:", anchor="w").grid(row=row, column=0, sticky="w")
+            tk.Label(
+                security_frame,
+                textvariable=self.security_vars[key],
+                anchor="w",
+                justify=tk.LEFT,
+                wraplength=135,
+            ).grid(row=row, column=1, sticky="w", padx=(6, 0))
+
+        security_frame.columnconfigure(1, weight=1)
 
         command_frame = tk.LabelFrame(left_frame, text="빠른 기능", padx=8, pady=8)
         command_frame.pack(fill=tk.X, pady=(12, 0))
@@ -189,6 +282,7 @@ class ChatApp:
             elif msg_type == "stats":
                 self._handle_stats(header)
 
+        self._refresh_security_panel()
         self.win.after(100, self._process_messages)
 
     def _handle_received_image(self, header: dict, payload: bytes) -> None:
@@ -197,9 +291,10 @@ class ChatApp:
         filename = str(header.get("filename", "image.bin"))
         expected_hash = str(header.get("sha256", ""))
         actual_hash = sha256_hex(payload)
-        integrity = "OK" if expected_hash and expected_hash == actual_hash else "확인불가"
+        integrity = "OK" if expected_hash and expected_hash == actual_hash else "Unknown"
         if expected_hash and expected_hash != actual_hash:
             integrity = "FAIL"
+        self.last_image_integrity_result = integrity
 
         save_path = save_received_file(self.receive_dir, sender, filename, payload)
         self._add_chat_line(f"[이미지] {sender} -> {target}: {filename} ({len(payload)} bytes)")
@@ -242,6 +337,7 @@ class ChatApp:
                     self._add_chat_line("[사용법] /w 사용자명 메시지")
                     return
                 self.client.send_whisper(parts[1].strip(), parts[2].strip())
+                self._refresh_security_panel()
                 return
 
             target = self._selected_target()
@@ -249,8 +345,10 @@ class ChatApp:
                 self.client.send_whisper(target, text)
             else:
                 self.client.send_chat(text)
+            self._refresh_security_panel()
         except OSError:
             self._add_chat_line("[오류] 메시지 전송 실패")
+            self._refresh_security_panel()
 
     def _handle_local_command(self, text: str) -> bool:
         command = text.lower().strip()
@@ -291,23 +389,34 @@ class ChatApp:
             digest = self.client.send_image(target, file_path)
             self._add_chat_line(f"[전송] 이미지 전송 요청: {Path(file_path).name} -> {target}")
             self._add_chat_line(f"        SHA-256: {digest[:16]}")
+            self._refresh_security_panel()
         except ValueError as exc:
             messagebox.showerror("전송 실패", str(exc))
         except OSError:
             self._add_chat_line("[오류] 이미지 전송 실패")
+            self._refresh_security_panel()
 
     def _refresh_security_panel(self) -> None:
-        if self.client is None or self.client.security_metadata is None:
-            self.security_text.set("보안 세션: 연결 전")
-            return
+        state = build_security_dashboard_state(self.client, self.last_image_integrity_result)
+        self.security_dashboard_state = state
 
-        metadata = self.client.security_metadata
-        self.security_text.set(
-            f"Cipher: {metadata.cipher}\n"
-            f"Session: {metadata.session_id}\n"
-            f"Client FP: {metadata.local_fingerprint}\n"
-            f"Server FP: {metadata.peer_fingerprint}"
-        )
+        values = {
+            "connection": state.connection_state,
+            "encryption": state.encryption_state,
+            "cipher": state.cipher,
+            "key_exchange": state.key_exchange,
+            "session_id": state.session_id,
+            "local_fp": state.local_fingerprint,
+            "peer_fp": state.peer_fingerprint,
+            "started_at": state.session_started_at,
+            "sent_packets": str(state.sent_packet_count),
+            "received_packets": str(state.received_packet_count),
+            "image_integrity": state.last_image_integrity,
+            "last_type": state.last_received_message_type,
+        }
+        for key, value in values.items():
+            if key in self.security_vars:
+                self.security_vars[key].set(value)
 
     def _show_security_report(self) -> None:
         if self.client is None:
@@ -321,8 +430,10 @@ class ChatApp:
             return
         try:
             self.client.request_stats()
+            self._refresh_security_panel()
         except OSError:
             self._add_chat_line("[오류] 서버 통계 요청 실패")
+            self._refresh_security_panel()
 
     def _export_transcript(self) -> None:
         default_name = f"secure_chat_transcript_{self.username or 'user'}.txt"
