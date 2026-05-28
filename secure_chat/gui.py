@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import queue
 import tkinter as tk
@@ -11,9 +11,14 @@ from tkinter import filedialog, messagebox, simpledialog
 from typing import Any
 
 from secure_chat.client import ChatClient, ServerTrustError
-from secure_chat.config import DEFAULT_RECEIVE_DIR
+from secure_chat.config import DEFAULT_FILE_RECEIVE_DIR, DEFAULT_RECEIVE_DIR
+from secure_chat.file_transfer import (
+    calculate_sha256,
+    format_file_size,
+    is_potentially_risky_file,
+    verify_file_hash,
+)
 from secure_chat.packet_inspector import PacketInspectionEvent, format_packet_inspection_event
-from secure_chat.security import sha256_hex
 from secure_chat.utils import save_received_file
 
 
@@ -34,7 +39,7 @@ class SecurityDashboardState:
     last_replay_status: str = "Not checked"
     server_trust_status: str = "Unknown"
     tofu_verification: str = "Unknown"
-    last_image_integrity: str = "N/A"
+    last_file_integrity: str = "N/A"
     last_received_message_type: str = "-"
 
 
@@ -56,7 +61,7 @@ def _format_datetime(value: Any) -> str:
 
 def build_security_dashboard_state(
     client: Any | None,
-    last_image_integrity: str = "N/A",
+    last_file_integrity: str = "N/A",
 ) -> SecurityDashboardState:
     metadata = getattr(client, "security_metadata", None) if client is not None else None
     connected = bool(client is not None and getattr(client, "connected", False))
@@ -64,7 +69,7 @@ def build_security_dashboard_state(
 
     if metadata is None:
         return SecurityDashboardState(
-            last_image_integrity=last_image_integrity,
+            last_file_integrity=last_file_integrity,
         )
 
     cipher = "PyNaCl Box" if "PyNaCl Box" in metadata.cipher else metadata.cipher
@@ -84,7 +89,7 @@ def build_security_dashboard_state(
         last_replay_status=str(getattr(client, "last_replay_status", "Not checked") or "Not checked"),
         server_trust_status=str(getattr(client, "server_trust_status", "Unknown") or "Unknown"),
         tofu_verification=str(getattr(client, "tofu_verification", "Unknown") or "Unknown"),
-        last_image_integrity=last_image_integrity,
+        last_file_integrity=last_file_integrity,
         last_received_message_type=str(getattr(client, "last_received_message_type", "-") or "-"),
     )
 
@@ -92,16 +97,24 @@ def build_security_dashboard_state(
 class ChatApp:
     """Tkinter wrapper for the encrypted chat client."""
 
-    def __init__(self, host: str, port: int, username: str | None = None, receive_dir: str = DEFAULT_RECEIVE_DIR) -> None:
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        username: str | None = None,
+        receive_dir: str = DEFAULT_RECEIVE_DIR,
+        file_receive_dir: str = DEFAULT_FILE_RECEIVE_DIR,
+    ) -> None:
         self.host = host
         self.port = port
         self.username = (username or "").strip()
         self.receive_dir = Path(receive_dir)
+        self.file_receive_dir = Path(file_receive_dir)
         self.client: ChatClient | None = None
         self.online_users: list[str] = []
         self.transcript_lines: list[str] = []
         self.packet_inspection_events: list[PacketInspectionEvent] = []
-        self.last_image_integrity_result = "N/A"
+        self.last_file_integrity_result = "N/A"
         self.security_dashboard_state = SecurityDashboardState()
 
         self.win = tk.Tk()
@@ -169,7 +182,7 @@ class ChatApp:
             ("replay_status", "Replay 검증"),
             ("server_trust", "서버 신뢰 상태"),
             ("tofu_result", "TOFU 검증"),
-            ("image_integrity", "이미지 무결성"),
+            ("file_integrity", "파일 무결성"),
             ("last_type", "마지막 수신 유형"),
         ]
 
@@ -230,7 +243,10 @@ class ChatApp:
         send_button.pack(side=tk.LEFT, padx=(0, 6))
 
         image_button = tk.Button(bottom_frame, text="이미지", width=10, command=self._send_image)
-        image_button.pack(side=tk.LEFT)
+        image_button.pack(side=tk.LEFT, padx=(0, 6))
+
+        file_button = tk.Button(bottom_frame, text="파일", width=10, command=self._send_file)
+        file_button.pack(side=tk.LEFT)
 
         status_bar = tk.Label(self.win, textvariable=self.status_text, anchor="w", relief=tk.SUNKEN)
         status_bar.pack(fill=tk.X, side=tk.BOTTOM)
@@ -322,6 +338,7 @@ class ChatApp:
         if self.client is None:
             return
 
+        self._drain_packet_inspection_events()
         while True:
             try:
                 header, payload = self.client.inbox.get_nowait()
@@ -343,6 +360,8 @@ class ChatApp:
                 self._add_chat_line(f"[귓속말] {header.get('from', '')} -> {header.get('to', '')}: {header.get('text', '')}")
             elif msg_type == "image":
                 self._handle_received_image(header, payload)
+            elif msg_type == "file":
+                self._handle_received_file(header, payload)
             elif msg_type == "stats":
                 self._handle_stats(header)
 
@@ -355,16 +374,45 @@ class ChatApp:
         target = str(header.get("to", "전체"))
         filename = str(header.get("filename", "image.bin"))
         expected_hash = str(header.get("sha256", ""))
-        actual_hash = sha256_hex(payload)
-        integrity = "OK" if expected_hash and expected_hash == actual_hash else "Unknown"
-        if expected_hash and expected_hash != actual_hash:
-            integrity = "FAIL"
-        self.last_image_integrity_result = integrity
+        actual_hash = calculate_sha256(payload)
+        integrity = self._integrity_result(payload, expected_hash)
+        self.last_file_integrity_result = integrity
+        self._mark_latest_packet_integrity("image", integrity)
 
-        save_path = save_received_file(self.receive_dir, sender, filename, payload)
-        self._add_chat_line(f"[이미지] {sender} -> {target}: {filename} ({len(payload)} bytes)")
+        size_text = format_file_size(len(payload))
+        self._add_chat_line(f"[이미지] {sender} -> {target}: {filename} ({size_text}, SHA-256 {integrity})")
+        if integrity == "FAIL":
+            self._add_chat_line(f"        SHA-256 무결성 실패로 저장하지 않음 / {actual_hash[:16]}")
+            return
+
+        save_path = save_received_file(self.receive_dir, sender, filename, payload, fallback="image.bin")
         self._add_chat_line(f"        저장 위치: {save_path}")
         self._add_chat_line(f"        SHA-256 무결성: {integrity} / {actual_hash[:16]}")
+
+    def _handle_received_file(self, header: dict, payload: bytes) -> None:
+        sender = str(header.get("from", "unknown"))
+        target = str(header.get("to", "전체"))
+        filename = str(header.get("filename", "file.bin"))
+        expected_hash = str(header.get("sha256", ""))
+        actual_hash = calculate_sha256(payload)
+        integrity = self._integrity_result(payload, expected_hash)
+        self.last_file_integrity_result = integrity
+        self._mark_latest_packet_integrity("file", integrity)
+
+        size_text = format_file_size(len(payload))
+        self._add_chat_line(f"[파일] {sender} -> {target}: {filename} ({size_text}, SHA-256 {integrity})")
+        if integrity == "FAIL":
+            self._add_chat_line(f"        SHA-256 무결성 실패로 저장하지 않음 / {actual_hash[:16]}")
+            return
+
+        save_path = save_received_file(self.file_receive_dir, sender, filename, payload, fallback="file.bin")
+        self._add_chat_line(f"        저장 위치: {save_path}")
+        self._add_chat_line(f"        SHA-256: {actual_hash[:16]}")
+
+    def _integrity_result(self, payload: bytes, expected_hash: str) -> str:
+        if not expected_hash:
+            return "Unknown"
+        return "OK" if verify_file_hash(payload, expected_hash) else "FAIL"
 
     def _handle_stats(self, header: dict) -> None:
         users = ", ".join(header.get("online_users", [])) or "없음"
@@ -374,7 +422,9 @@ class ChatApp:
             f"online={header.get('online_count', 0)}, "
             f"messages={header.get('total_messages', 0)}, "
             f"images={header.get('total_images', 0)}, "
-            f"image_bytes={header.get('total_image_bytes', 0)}"
+            f"image_bytes={header.get('total_image_bytes', 0)}, "
+            f"files={header.get('total_files', 0)}, "
+            f"file_bytes={header.get('total_file_bytes', 0)}"
         )
         self._add_chat_line(f"[서버통계] users={users}")
 
@@ -466,6 +516,44 @@ class ChatApp:
             self._add_chat_line("[오류] 이미지 전송 실패")
             self._refresh_security_panel()
 
+    def _send_file(self) -> None:
+        if self.client is None:
+            return
+
+        file_path = filedialog.askopenfilename(
+            title="전송할 파일 선택",
+            filetypes=[("All files", "*.*")],
+        )
+        if not file_path:
+            return
+
+        filename = Path(file_path).name
+        if is_potentially_risky_file(filename):
+            should_continue = messagebox.askyesno(
+                "위험 파일 경고",
+                "실행 가능한 파일 또는 스크립트로 보이는 확장자입니다.\n"
+                "수신자가 실행하면 보안 위험이 있을 수 있습니다.\n\n"
+                "그래도 전송하시겠습니까?",
+                parent=self.win,
+            )
+            if not should_continue:
+                return
+
+        target = self._selected_target()
+        try:
+            digest = self.client.send_file(target, file_path)
+            size_text = format_file_size(Path(file_path).stat().st_size)
+            self._add_chat_line(f"[전송] 파일 전송 요청: {filename} -> {target} ({size_text})")
+            self._add_chat_line(f"        SHA-256: {digest[:16]}")
+            self._drain_packet_inspection_events()
+            self._refresh_security_panel()
+        except ValueError as exc:
+            messagebox.showerror("전송 실패", str(exc))
+        except OSError:
+            self._drain_packet_inspection_events()
+            self._add_chat_line("[오류] 파일 전송 실패")
+            self._refresh_security_panel()
+
     def _drain_packet_inspection_events(self) -> None:
         if self.client is None:
             self._refresh_packet_inspector()
@@ -484,6 +572,14 @@ class ChatApp:
         if changed:
             self._refresh_packet_inspector()
 
+    def _mark_latest_packet_integrity(self, logical_type: str, integrity_result: str) -> None:
+        for index in range(len(self.packet_inspection_events) - 1, -1, -1):
+            event = self.packet_inspection_events[index]
+            if event.direction == "INBOUND" and event.logical_type == logical_type:
+                self.packet_inspection_events[index] = replace(event, integrity_result=integrity_result)
+                self._refresh_packet_inspector()
+                return
+
     def _refresh_packet_inspector(self) -> None:
         if not hasattr(self, "packet_inspector_text"):
             return
@@ -499,7 +595,7 @@ class ChatApp:
         self.packet_inspector_text.config(state=tk.DISABLED)
 
     def _refresh_security_panel(self) -> None:
-        state = build_security_dashboard_state(self.client, self.last_image_integrity_result)
+        state = build_security_dashboard_state(self.client, self.last_file_integrity_result)
         self.security_dashboard_state = state
 
         values = {
@@ -518,7 +614,7 @@ class ChatApp:
             "replay_status": state.last_replay_status,
             "server_trust": state.server_trust_status,
             "tofu_result": state.tofu_verification,
-            "image_integrity": state.last_image_integrity,
+            "file_integrity": state.last_file_integrity,
             "last_type": state.last_received_message_type,
         }
         for key, value in values.items():

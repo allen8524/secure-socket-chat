@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from secure_chat.config import DEFAULT_HOST, DEFAULT_PORT, MAX_PAYLOAD_SIZE
 from secure_chat.crypto_channel import PacketSequenceError, ReplayAttackError, SecureChannel, create_client_channel
+from secure_chat.file_transfer import build_file_header, calculate_sha256, format_file_size
 from secure_chat.packet_inspector import PacketInspectionEvent
 from secure_chat.security import ChannelMetadata, sha256_hex
 from secure_chat.trust_store import TrustCheckResult, check_server_fingerprint, trust_server_fingerprint
@@ -156,7 +157,7 @@ class ChatClient:
     def send_image(self, target: str, file_path: str | Path) -> str:
         path = Path(file_path)
         if path.stat().st_size > MAX_PAYLOAD_SIZE:
-            raise ValueError("이미지는 10MB 이하만 전송할 수 있습니다.")
+            raise ValueError(f"이미지는 {format_file_size(MAX_PAYLOAD_SIZE)} 이하만 전송할 수 있습니다.")
 
         payload = path.read_bytes()
         digest = sha256_hex(payload)
@@ -168,6 +169,24 @@ class ChatClient:
                 "file_size": len(payload),
                 "sha256": digest,
             },
+            payload,
+        )
+        return digest
+
+    def send_file(self, target: str, file_path: str | Path) -> str:
+        path = Path(file_path)
+        if path.stat().st_size > MAX_PAYLOAD_SIZE:
+            raise ValueError(f"파일은 {format_file_size(MAX_PAYLOAD_SIZE)} 이하만 전송할 수 있습니다.")
+
+        payload = path.read_bytes()
+        digest = calculate_sha256(payload)
+        self._send(
+            build_file_header(
+                target=target,
+                filename=path.name,
+                file_size=len(payload),
+                sha256=digest,
+            ),
             payload,
         )
         return digest

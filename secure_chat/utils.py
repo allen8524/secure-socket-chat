@@ -19,13 +19,13 @@ def safe_filename(name: str, fallback: str = "image.bin") -> str:
     return base.replace("/", "_").replace("\\", "_")
 
 
-def save_received_file(directory: str | Path, sender: str, filename: str, payload: bytes) -> Path:
+def save_received_file(directory: str | Path, sender: str, filename: str, payload: bytes, fallback: str = "image.bin") -> Path:
     receive_dir = Path(directory)
     receive_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     safe_sender = safe_filename(sender, fallback="unknown")
-    safe_name = safe_filename(filename)
+    safe_name = safe_filename(filename, fallback=fallback)
     save_path = receive_dir / f"{timestamp}_{safe_sender}_{safe_name}"
 
     counter = 1

@@ -30,8 +30,30 @@ def test_image_header_summary_hides_binary_payload_and_marks_hash():
     assert "type=image" in summary
     assert "filename='sample.png'" in summary
     assert "file_size=1024" in summary
-    assert "sha256=yes" in summary
+    assert "sha256=abc123" in summary
     assert "binary" not in summary.lower()
+
+
+def test_file_header_summary_shows_metadata_without_payload():
+    header = {
+        "type": "file",
+        "from": "alice",
+        "to": "bob",
+        "filename": "report.pdf",
+        "file_size": 2048,
+        "extension": ".pdf",
+        "sha256": "0123456789abcdef0123456789abcdef",
+        "sequence": 4,
+    }
+
+    summary = summarize_logical_header(header, payload_size=2048)
+
+    assert "type=file" in summary
+    assert "filename='report.pdf'" in summary
+    assert "file_size=2048" in summary
+    assert "extension='.pdf'" in summary
+    assert "sha256=0123456789abcdef..." in summary
+    assert "payload" not in summary.lower()
 
 
 def test_ciphertext_preview_is_base64_and_truncated():
@@ -56,6 +78,7 @@ def test_packet_inspection_event_formats_safe_fields():
     assert "OUTBOUND whisper" in rendered
     assert "sequence: 7" in rendered
     assert "replay: N/A" in rendered
+    assert "result: Not checked" in rendered
     assert "payload size: 0 bytes" in rendered
     assert "encrypted packet size:" in rendered
     assert "decrypt: N/A" in rendered

@@ -49,7 +49,7 @@ def test_security_dashboard_state_uses_client_metadata_and_counters():
         last_received_message_type="image",
     )
 
-    state = build_security_dashboard_state(client, last_image_integrity="OK")
+    state = build_security_dashboard_state(client, last_file_integrity="OK")
 
     assert state.connection_state == "Connected"
     assert state.encryption_state == "Active"
@@ -66,5 +66,5 @@ def test_security_dashboard_state_uses_client_metadata_and_counters():
     assert state.last_replay_status == "OK sequence=6"
     assert state.server_trust_status == "Trusted"
     assert state.tofu_verification == "OK"
-    assert state.last_image_integrity == "OK"
+    assert state.last_file_integrity == "OK"
     assert state.last_received_message_type == "image"

@@ -10,6 +10,7 @@ from typing import Iterable
 
 from secure_chat.config import DEFAULT_HOST, DEFAULT_PORT, SOCKET_TIMEOUT_SECONDS
 from secure_chat.crypto_channel import PacketSequenceError, ReplayAttackError, SecureChannel, create_server_channel
+from secure_chat.file_transfer import file_extension, guess_mime_type
 from secure_chat.protocol import ProtocolError
 from secure_chat.utils import safe_filename
 
@@ -28,6 +29,8 @@ class ChatServer:
         self._total_messages = 0
         self._total_images = 0
         self._total_image_bytes = 0
+        self._total_files = 0
+        self._total_file_bytes = 0
         self._stats_lock = threading.Lock()
         self._server_sock: socket.socket | None = None
         self._running = threading.Event()
@@ -174,6 +177,8 @@ class ChatServer:
                     self._handle_whisper(username, header)
                 elif msg_type == "image":
                     self._handle_image(username, header, payload)
+                elif msg_type == "file":
+                    self._handle_file(username, header, payload)
                 elif msg_type == "stats":
                     self._handle_stats(username)
                 else:
@@ -274,6 +279,48 @@ class ChatServer:
             self._send_to(username, packet, payload)
         logger.info("image whisper: %s -> %s / %s bytes", username, target, len(payload))
 
+    def _handle_file(self, username: str, header: dict, payload: bytes) -> None:
+        target = str(header.get("to", "전체")).strip() or "전체"
+        filename = safe_filename(str(header.get("filename", "file.bin")), fallback="file.bin")
+
+        if not payload:
+            self._send_to(username, {"type": "error", "text": "파일 데이터가 비어 있습니다."})
+            return
+
+        self._record_file(len(payload))
+        packet = {
+            "type": "file",
+            "from": username,
+            "to": target,
+            "filename": filename,
+            "file_size": len(payload),
+            "sha256": str(header.get("sha256", "")),
+            "mime_type": str(header.get("mime_type", "")) or guess_mime_type(filename),
+            "extension": str(header.get("extension", "")) or file_extension(filename),
+        }
+        hash_preview = packet["sha256"][:16] if packet["sha256"] else "-"
+
+        if target == "전체":
+            self._broadcast(packet, payload)
+            logger.info("file broadcast: %s / %s / %s bytes / sha256=%s", username, filename, len(payload), hash_preview)
+            return
+
+        if target not in self._get_clients_snapshot():
+            self._send_to(username, {"type": "error", "text": f"{target} 사용자를 찾을 수 없습니다."})
+            return
+
+        self._send_to(target, packet, payload)
+        if target != username:
+            self._send_to(username, packet, payload)
+        logger.info(
+            "file whisper: %s -> %s / %s / %s bytes / sha256=%s",
+            username,
+            target,
+            filename,
+            len(payload),
+            hash_preview,
+        )
+
     def _record_message(self) -> None:
         with self._stats_lock:
             self._total_messages += 1
@@ -283,6 +330,11 @@ class ChatServer:
             self._total_images += 1
             self._total_image_bytes += byte_count
 
+    def _record_file(self, byte_count: int) -> None:
+        with self._stats_lock:
+            self._total_files += 1
+            self._total_file_bytes += byte_count
+
     def _handle_stats(self, username: str) -> None:
         with self._clients_lock:
             online_users = sorted(self._clients.keys())
@@ -290,6 +342,8 @@ class ChatServer:
             total_messages = self._total_messages
             total_images = self._total_images
             total_image_bytes = self._total_image_bytes
+            total_files = self._total_files
+            total_file_bytes = self._total_file_bytes
 
         uptime_seconds = int(time.time() - self._started_at)
         self._send_to(
@@ -302,5 +356,7 @@ class ChatServer:
                 "total_messages": total_messages,
                 "total_images": total_images,
                 "total_image_bytes": total_image_bytes,
+                "total_files": total_files,
+                "total_file_bytes": total_file_bytes,
             },
         )

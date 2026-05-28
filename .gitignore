@@ -6,6 +6,7 @@ venv/
 env/
 .DS_Store
 received_images/
+received_files/
 *.log
 *.tmp
 .idea/

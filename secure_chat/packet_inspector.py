@@ -21,6 +21,7 @@ class PacketInspectionEvent:
     ciphertext_preview: str
     timestamp: datetime
     integrity_hash_present: bool
+    integrity_result: str
     decrypt_success: bool | None
     replay_status: str
     blocked: bool
@@ -46,6 +47,13 @@ def ciphertext_preview(data: bytes, limit: int = 72) -> str:
 
 def has_integrity_hash(header: dict[str, Any]) -> bool:
     return bool(str(header.get("sha256", "")).strip())
+
+
+def hash_preview(header: dict[str, Any], limit: int = 16) -> str:
+    digest = str(header.get("sha256", "")).strip()
+    if not digest:
+        return "-"
+    return truncate_value(digest, limit)
 
 
 def sequence_preview(header: dict[str, Any]) -> str:
@@ -79,7 +87,20 @@ def summarize_logical_header(header: dict[str, Any], payload_size: int = 0) -> s
             f"to={truncate_value(header.get('to', '-'), 18)!r}, "
             f"filename={truncate_value(header.get('filename', 'image.bin'), 28)!r}, "
             f"file_size={file_size}, "
-            f"sha256={'yes' if has_integrity_hash(header) else 'no'}"
+            f"sha256={hash_preview(header)}"
+        )
+
+    if msg_type == "file":
+        file_size = header.get("file_size", payload_size)
+        return (
+            "type=file, "
+            f"sequence={sequence}, "
+            f"from={truncate_value(header.get('from', '-'), 18)!r}, "
+            f"to={truncate_value(header.get('to', '-'), 18)!r}, "
+            f"filename={truncate_value(header.get('filename', 'file.bin'), 28)!r}, "
+            f"file_size={file_size}, "
+            f"extension={truncate_value(header.get('extension', ''), 12)!r}, "
+            f"sha256={hash_preview(header)}"
         )
 
     if msg_type == "users":
@@ -94,7 +115,14 @@ def summarize_logical_header(header: dict[str, Any], payload_size: int = 0) -> s
         return f"type=join, sequence={sequence}, username={truncate_value(header.get('username', ''), 18)!r}"
 
     if msg_type == "stats":
-        keys = ["online_count", "total_messages", "total_images", "total_image_bytes"]
+        keys = [
+            "online_count",
+            "total_messages",
+            "total_images",
+            "total_image_bytes",
+            "total_files",
+            "total_file_bytes",
+        ]
         details = [f"{key}={header[key]}" for key in keys if key in header]
         details.insert(0, f"sequence={sequence}")
         return "type=stats, " + ", ".join(details)
@@ -112,6 +140,7 @@ def build_packet_inspection_event(
     payload: bytes = b"",
     encrypted_packet: bytes = b"",
     decrypt_success: bool | None = None,
+    integrity_result: str = "Not checked",
     replay_status: str = "N/A",
     blocked: bool = False,
     error_message: str = "-",
@@ -128,6 +157,7 @@ def build_packet_inspection_event(
         ciphertext_preview=ciphertext_preview(encrypted_packet),
         timestamp=datetime.now(),
         integrity_hash_present=has_integrity_hash(safe_header),
+        integrity_result=truncate_value(integrity_result or "Not checked", 32),
         decrypt_success=decrypt_success,
         replay_status=truncate_value(replay_status, 48),
         blocked=blocked,
@@ -147,7 +177,7 @@ def format_packet_inspection_event(event: PacketInspectionEvent) -> str:
             f"  payload size: {event.payload_size} bytes",
             f"  encrypted packet size: {event.encrypted_packet_size} bytes",
             f"  ciphertext preview: {event.ciphertext_preview}",
-            f"  integrity hash: {hash_text} | decrypt: {decrypt_text}",
+            f"  integrity hash: {hash_text} | result: {event.integrity_result} | decrypt: {decrypt_text}",
             f"  last error: {event.error_message}",
         ]
     )

@@ -173,6 +173,12 @@ def packet_summary(header: dict[str, Any], payload: bytes = b"") -> str:
         filename = str(header.get("filename", "image.bin"))
         return f"type=image, filename={filename}, bytes={len(payload)}"
 
+    if msg_type == "file":
+        filename = str(header.get("filename", "file.bin"))
+        digest = str(header.get("sha256", ""))
+        hash_preview = digest[:16] if digest else "-"
+        return f"type=file, filename={filename}, bytes={len(payload)}, sha256={hash_preview}"
+
     if msg_type == "users":
         return f"type=users, users={header.get('users', [])}"
 

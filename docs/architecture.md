@@ -25,7 +25,7 @@ Server
 5. 암호화 채널 생성
 6. join 요청 검증
 7. 사용자 등록
-8. chat, whisper, image 패킷 라우팅
+8. chat, whisper, image, file 패킷 라우팅
 9. leave 또는 연결 종료 시 사용자 제거
 
 ## 클라이언트 흐름
