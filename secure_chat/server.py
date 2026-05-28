@@ -53,6 +53,10 @@ class ChatServer:
                     client_sock, addr = self._server_sock.accept()
                 except socket.timeout:
                     continue
+                except OSError:
+                    if not self._running.is_set():
+                        break
+                    raise
 
                 client_thread = threading.Thread(
                     target=self._handle_client,

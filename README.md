@@ -14,6 +14,16 @@ SecureSocketChat은 단순 채팅 예제를 넘어, 네트워크 패킷 framing,
 -->
 ```
 
+GUI를 여러 개 띄우지 않고 핵심 통신 흐름을 확인하려면 CLI 자동 데모를 실행할 수 있습니다.
+
+```bash
+python demo.py
+```
+
+CLI 데모는 로컬 서버를 thread로 시작한 뒤 `alice`, `bob` 테스트 클라이언트를 연결하고, 전체 채팅, 귓속말, SHA-256 검증 기반 파일 전송, 서버 통계 요청을 자동으로 수행합니다. 데모용 TOFU trust store와 샘플 파일은 임시 디렉터리에 생성되며 종료 후 정리됩니다.
+
+자세한 시나리오는 `docs/demo.md`를 참고하세요.
+
 ## 핵심 기능
 
 | 구분 | 내용 |
@@ -117,6 +127,7 @@ secure-socket-chat/
 ├─ pyproject.toml
 ├─ run_server.py
 ├─ run_client.py
+├─ demo.py
 ├─ secure_chat/
 │  ├─ config.py
 │  ├─ protocol.py
@@ -133,6 +144,7 @@ secure-socket-chat/
 ├─ tests/
 │  ├─ test_protocol.py
 │  ├─ test_crypto_channel.py
+│  ├─ test_demo.py
 │  ├─ test_file_transfer.py
 │  ├─ test_sequence_replay.py
 │  ├─ test_trust_store.py
